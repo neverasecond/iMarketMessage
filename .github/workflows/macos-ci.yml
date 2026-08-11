@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build-and-test:
     name: Swift build and test (full Xcode)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
@@ -30,26 +30,64 @@ jobs:
         run: |
           set -euo pipefail
 
-          # GitHub-hosted macOS images include Xcode. Prefer the selected
-          # /Applications/Xcode.app when present, then fall back to a versioned
-          # Xcode_*.app. CommandLineTools alone is intentionally rejected.
-          if [[ -d "/Applications/Xcode.app/Contents/Developer" ]]; then
-            xcode_app="/Applications/Xcode.app"
-          else
-            shopt -s nullglob
-            xcode_apps=(/Applications/Xcode_*.app)
-            if (( ${#xcode_apps[@]} == 0 )); then
-              echo "No full Xcode installation was found under /Applications" >&2
-              exit 1
-            fi
-            xcode_app="${xcode_apps[0]}"
+          # macOS runners can expose several Xcode bundles and a default
+          # Xcode.app symlink. Inspect every full installation and require a
+          # Swift 6+ toolchain instead of trusting the first/default bundle.
+          shopt -s nullglob
+          xcode_apps=(/Applications/Xcode*.app)
+          if (( ${#xcode_apps[@]} == 0 )); then
+            echo "No full Xcode installation was found under /Applications" >&2
+            exit 1
           fi
 
-          developer_dir="$(cd "$xcode_app/Contents/Developer" && pwd -P)"
-          test -x "$developer_dir/usr/bin/xcodebuild"
-          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
-          echo "Using $developer_dir"
-          "$developer_dir/usr/bin/xcodebuild" -version
+          selected_developer_dir=""
+          seen_developer_dirs=()
+          available_xcodes=()
+          for xcode_app in "${xcode_apps[@]}"; do
+            [[ -d "$xcode_app/Contents/Developer" ]] || continue
+            developer_dir="$(cd "$xcode_app/Contents/Developer" && pwd -P)"
+
+            already_seen=false
+            for seen_developer_dir in "${seen_developer_dirs[@]}"; do
+              if [[ "$seen_developer_dir" == "$developer_dir" ]]; then
+                already_seen=true
+                break
+              fi
+            done
+            [[ "$already_seen" == true ]] && continue
+            seen_developer_dirs+=("$developer_dir")
+
+            xcodebuild_path="$developer_dir/usr/bin/xcodebuild"
+            swift_path="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
+            [[ -x "$xcodebuild_path" ]] || continue
+            xcode_version="$($xcodebuild_path -version | sed -n '1p')"
+            if [[ -x "$swift_path" ]]; then
+              swift_version_line="$($swift_path --version | sed -n '1p')"
+              swift_major="$(printf '%s\n' "$swift_version_line" | awk '{for (i = 1; i <= NF; i++) if ($i == "version") {split($(i + 1), v, "."); print v[1]; exit}}')"
+              available_xcodes+=("$(basename "$xcode_app"): $xcode_version; $swift_version_line")
+              if [[ "$swift_major" =~ ^[0-9]+$ ]] && (( swift_major >= 6 )) && [[ -z "$selected_developer_dir" ]]; then
+                selected_developer_dir="$developer_dir"
+              fi
+            else
+              available_xcodes+=("$(basename "$xcode_app"): $xcode_version; Swift toolchain unavailable")
+            fi
+          done
+
+          if [[ -z "$selected_developer_dir" ]]; then
+            echo "No full Xcode with Swift tools version 6+ was found." >&2
+            echo "Available Xcode installations:" >&2
+            if (( ${#available_xcodes[@]} == 0 )); then
+              echo "  (none)" >&2
+            else
+              printf '  %s\n' "${available_xcodes[@]}" >&2
+            fi
+            exit 1
+          fi
+
+          test -x "$selected_developer_dir/usr/bin/xcodebuild"
+          echo "DEVELOPER_DIR=$selected_developer_dir" >> "$GITHUB_ENV"
+          echo "Using $selected_developer_dir"
+          "$selected_developer_dir/usr/bin/xcodebuild" -version
 
       - name: Verify the selected Swift toolchain
         shell: bash
