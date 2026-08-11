@@ -45,7 +45,7 @@ jobs:
             xcode_app="${xcode_apps[0]}"
           fi
 
-          developer_dir="$xcode_app/Contents/Developer"
+          developer_dir="$(cd "$xcode_app/Contents/Developer" && pwd -P)"
           test -x "$developer_dir/usr/bin/xcodebuild"
           echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
           echo "Using $developer_dir"
