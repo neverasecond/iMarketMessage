@@ -1,0 +1,23 @@
+{
+  "rules" : [
+    {
+      "conditions" : [
+        {
+          "comparison" : ">=",
+          "id" : "00000000-0000-0000-0000-000000000001",
+          "metric" : "close",
+          "provider" : "cboe-vix",
+          "symbol" : "VIX",
+          "threshold" : 25
+        }
+      ],
+      "cooldownTradingDays" : 5,
+      "enabled" : true,
+      "id" : "00000000-0000-0000-0000-000000000010",
+      "logic" : "all",
+      "name" : "VIX 高波动（示例）",
+      "triggerOnEntryOnly" : true
+    }
+  ],
+  "version" : 1
+}

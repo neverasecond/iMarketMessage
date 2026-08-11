@@ -1,0 +1,78 @@
+name: macOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# This workflow only needs to read source; it does not publish, sign, or notarize.
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Swift build and test (full Xcode)
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Select a full Xcode installation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # GitHub-hosted macOS images include Xcode. Prefer the selected
+          # /Applications/Xcode.app when present, then fall back to a versioned
+          # Xcode_*.app. CommandLineTools alone is intentionally rejected.
+          if [[ -d "/Applications/Xcode.app/Contents/Developer" ]]; then
+            xcode_app="/Applications/Xcode.app"
+          else
+            shopt -s nullglob
+            xcode_apps=(/Applications/Xcode_*.app)
+            if (( ${#xcode_apps[@]} == 0 )); then
+              echo "No full Xcode installation was found under /Applications" >&2
+              exit 1
+            fi
+            xcode_app="${xcode_apps[0]}"
+          fi
+
+          developer_dir="$xcode_app/Contents/Developer"
+          test -x "$developer_dir/usr/bin/xcodebuild"
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          echo "Using $developer_dir"
+          "$developer_dir/usr/bin/xcodebuild" -version
+
+      - name: Verify the selected Swift toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${DEVELOPER_DIR:-}"
+          test -x "$DEVELOPER_DIR/usr/bin/xcodebuild"
+          swift_path="$(xcrun --find swift)"
+          case "$swift_path" in
+            "$DEVELOPER_DIR"/*) ;;
+            *)
+              echo "Swift is not coming from the selected full Xcode: $swift_path" >&2
+              exit 1
+              ;;
+          esac
+          xcodebuild -version
+          swift --version
+
+      - name: Build and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_tmp="$(mktemp -d /tmp/imarketmessage-ci.XXXXXX)"
+          trap 'rm -rf -- "$ci_tmp"' EXIT
+          swift build --scratch-path "$ci_tmp/build"
+          swift test --scratch-path "$ci_tmp/test"

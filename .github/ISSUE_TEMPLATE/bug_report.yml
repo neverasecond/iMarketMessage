@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a reproducible problem in iMarketMessage (iMM).
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先确认这是代码问题，而不是行情服务延迟、服务条款限制或本机 gateway 配置问题。
+        不要粘贴 API key、电话号码、chat ID、消息正文、个人路径、证书或 Keychain 输出。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题摘要
+      description: 用一两句话说明实际发生了什么。
+      placeholder: 例如：CLI 在读取示例规则时退出并报告 configurationError。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: 提供 macOS 主版本、完整 Xcode 版本和 Swift 版本；不要包含用户名或个人路径。
+      placeholder: |
+        macOS: 14.x
+        Xcode: 16.x
+        Swift: 6.x
+        安装方式: 源码 / 本地打包
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 列出最小、可重复的步骤和使用的脱敏配置片段。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期与实际结果
+      description: 分别说明预期行为、实际行为和是否每次复现。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏日志（可选）
+      description: 仅粘贴删除 secret、账户、个人路径、消息正文后的最小日志。优先提供错误类型和退出码。
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已删除 API key、证书、个人路径、电话号码、chat ID、消息正文和其他敏感信息。
+          required: true
+        - label: 我已确认问题可以在没有真实 iMessage 发送的情况下复现，或已说明外部 gateway 依赖。
+          required: true

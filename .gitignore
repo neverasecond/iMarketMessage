@@ -1,0 +1,12 @@
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+*.app/
+*.log
+*.out
+*.err
+.DS_Store
+Config/*.local.json
+outbox/

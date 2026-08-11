@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.marketmessage.monitor</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/ABSOLUTE/PATH/TO/market-message-cli</string>
+        <string>--config</string>
+        <string>/ABSOLUTE/PATH/TO/rules.json</string>
+        <string>--outbox</string>
+        <string>/ABSOLUTE/PATH/TO/outbox</string>
+        <string>--state</string>
+        <string>/ABSOLUTE/PATH/TO/runtime-state.json</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+    <key>StandardErrorPath</key>
+    <string>/dev/null</string>
+</dict>
+</plist>

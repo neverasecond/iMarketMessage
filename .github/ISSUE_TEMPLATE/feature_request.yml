@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest a scoped improvement for iMarketMessage (iMM).
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        v0.1.0-alpha 优先保持本地优先、最小权限和可审查边界。请求中不要包含账户、证书、API key、联系人或真实消息内容。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 说明当前工作流的具体痛点，而不是只描述想要的实现。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 描述用户可见行为、配置变化和已知取舍。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已考虑的替代方案（可选）
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: 边界确认
+      options:
+        - label: 该请求不会默认读取 Messages 数据库、联系人、电话号码或 chat ID。
+        - label: 该请求不会在未经单独授权的情况下发送真实消息或修改用户 gateway。
+        - label: 我已删除描述中的个人信息和凭据。
+          required: true
