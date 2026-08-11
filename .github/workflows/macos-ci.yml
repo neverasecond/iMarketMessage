@@ -48,7 +48,8 @@ jobs:
             developer_dir="$(cd "$xcode_app/Contents/Developer" && pwd -P)"
 
             already_seen=false
-            for seen_developer_dir in "${seen_developer_dirs[@]}"; do
+            for ((seen_index = 0; seen_index < ${#seen_developer_dirs[@]}; seen_index++)); do
+              seen_developer_dir="${seen_developer_dirs[$seen_index]}"
               if [[ "$seen_developer_dir" == "$developer_dir" ]]; then
                 already_seen=true
                 break
