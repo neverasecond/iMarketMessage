@@ -274,7 +274,7 @@ final class RuleViewModel: ObservableObject {
         } else if result.error != nil || result.failedCount > 0 || result.rejectedCount > 0 || result.quarantinedCount > 0 {
             pairingSendStatus = "发送失败；请查看 gateway 状态"
         } else if result.sentCount > 0 {
-            pairingSendStatus = "已发送 (result.sentCount) 条"
+            pairingSendStatus = "已发送 \(result.sentCount) 条"
         } else if result.duplicateCount > 0 {
             pairingSendStatus = "无新消息（重复已跳过）"
         } else {
@@ -381,7 +381,7 @@ final class RuleViewModel: ObservableObject {
         case .enabled: backgroundStatus = "已启用（每 15 分钟检查）"
         case .requiresApproval: backgroundStatus = "等待在“系统设置 → 登录项”中批准"
         case .notRegistered: backgroundStatus = "未启用"
-        case .notFound: backgroundStatus = "App bundle 缺少后台服务配置"
+        case .notFound: backgroundStatus = "尚未注册；点击“启用后台监控”"
         @unknown default: backgroundStatus = "未知状态"
         }
         refreshBackgroundHealth()
