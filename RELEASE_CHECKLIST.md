@@ -2,11 +2,15 @@
 
 这份清单用于本地预发布和 GitHub Release 准备。发布者必须逐项确认；本仓库不会创建仓库、打 tag、推送、签名、提交公证或发布外部资产。
 
+## 当前交付形态
+
+`v0.1.0-alpha` 当前按“源码 alpha、开发者可运行”交付：仓库提供 Swift Package 源码、测试、配置示例和只读 gateway 预览，不提供签名/公证的 `.app`、DMG 或真实 iMessage sender。若本次只发布源码 tag/Release，将下方“应用包装与用户体验”“Developer ID 签名与公证”以及二进制归档条目标记为“不适用”，并在 Release notes 中明确 source-only；这些可选条目不应被解读为本仓库已经提供相应附件。
+
 ## 发布身份
 
 - [ ] 公开仓库名确认是 `iMarketMessage`。
 - [ ] 面向用户的 macOS 应用名确认是 `iMM`；`MarketMessage` 兼容目标与用户可见名称的差异已在发布说明中解释。
-- [ ] 版本号和 tag 确认为 `v0.1.0-alpha`，并与 [`CHANGELOG.md`](CHANGELOG.md)、app bundle 和归档文件名一致。
+- [ ] 版本号和 tag 确认为 `v0.1.0-alpha`，并与 [`CHANGELOG.md`](CHANGELOG.md) 一致；只有发布二进制时才另外核对 app bundle 和归档文件名，source-only 只核对源码归档与 Release 标题。
 - [ ] 发布说明包含“本地优先的 macOS 行情提醒工具，不构成投资建议”、数据延迟/限流、outbox/gateway 边界和当前 provider 限制。
 
 ## 代码、构建与测试
@@ -24,14 +28,14 @@
 - [ ] 如进行了 CLI smoke test，已说明它访问 Cboe VIX 或其他外部服务，并确认服务条款、速率限制和结果日期。
 - [ ] 验证失败时停止发布；不要把系统运行时库、临时补丁或本机路径提交进仓库。
 
-## 应用包装与用户体验
+## 应用包装与用户体验（仅在发布二进制附件时适用）
 
 - [ ] 实际 `.app` bundle 已由发布者准备，Info.plist、bundle identifier、版本、架构、图标和嵌套代码经过检查；未把裸 SwiftPM 可执行文件直接冒充正式 app。
 - [ ] 首次启动、规则增删改、Keychain key 保存/删除、outbox 权限和错误状态在干净 Mac 上验证。
 - [ ] LaunchAgent 仍是模板，不会随安装自动启用；安装、观察、卸载步骤由用户另行执行。
-- [ ] 如果发布页或文档需要截图，截图由用户在脱敏环境中提供；当前仓库没有截图，不生成或伪造占位截图。
+- [ ] 如果发布页需要真实发布物截图，截图由用户在脱敏环境中提供；仓库中的 [`docs/assets/imm-demo-hero.png`](docs/assets/imm-demo-hero.png) 仅是 `--demo-screenshot` 生成的只读演示图，不代表已签名、公证的 `.app`，也不能替代发布物验收。
 
-## Developer ID 签名与公证（用户本人操作）
+## Developer ID 签名与公证（仅在发布二进制附件时适用，用户本人操作）
 
 - [ ] 参照 [`docs/APPLE_SIGNING.md`](docs/APPLE_SIGNING.md)，由 Account Holder/授权发布者在本人 Mac 上创建或确认 Developer ID Application 证书。
 - [ ] CSR、私钥、`.cer`、`.p12`、provisioning profile、App Store Connect 凭据和 `notarytool` Keychain profile 均未进入 Git、CI 日志、issue、PR 或发布附件。
@@ -41,12 +45,12 @@
 - [ ] 已对最终 app 执行 `xcrun stapler staple`、`xcrun stapler validate`，重新打包后再次验证；未把未公证版本上传给用户。
 - [ ] 提交 ID、证书过期日期、私有日志和签名身份只保存在受控发布记录中，不写入公开说明。
 
-## 归档与 GitHub Release
+## 归档与 GitHub Release（源码或二进制按实际交付形态选择）
 
-- [ ] 归档只包含必要的 `.app`/安装材料、许可证和发布说明；没有 `.build`、CSR、私钥、Keychain 导出、outbox、真实规则或测试日志。
+- [ ] 若发布二进制，归档只包含必要的 `.app`/安装材料、许可证和发布说明；若只发布源码，则归档只包含源码和必要文档；两种形态都不得包含 `.build`、CSR、私钥、Keychain 导出、outbox、真实规则或测试日志。
 - [ ] 为每个公开附件计算 SHA-256，并把校验和与附件一一对应；校验和记录中没有个人路径。
 - [ ] 用户本人确认 GitHub Actions 的 CI 已通过；workflow 权限保持最小读权限，不把签名或公证 secrets 加到本 alpha。
-- [ ] 用户本人创建 `v0.1.0-alpha` tag 和 GitHub Release，上传经签名、公证、staple 和干净 Mac 验证的最终附件。
+- [ ] 用户本人创建 `v0.1.0-alpha` tag 和 GitHub Release；源码路径上传源码归档并明确 source-only，二进制路径才上传经签名、公证、staple 和干净 Mac 验证的附件。
 - [ ] 发布说明链接到 [`LIMITATIONS.md`](LIMITATIONS.md)、[`PRIVACY.md`](PRIVACY.md)、[`SECURITY.md`](SECURITY.md) 和 [`NOTICE`](NOTICE)。
 
 ## 发布后

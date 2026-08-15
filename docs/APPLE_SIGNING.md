@@ -154,7 +154,7 @@ spctl --assess --type execute --verbose=4 "<path/to/iMM.app>"
 - [ ] `codesign --verify`、`stapler validate` 和公证后的 `spctl` 均通过。
 - [ ] 已在干净 Mac 安装/首次启动，确认 Gatekeeper 显示公证状态；同时确认规则保存、Keychain key 和 outbox 行为符合 [隐私声明](../PRIVACY.md)。
 - [ ] 发布物只包含必要文件；没有 CSR、私钥、`.p12`、provisioning profile、notary 凭据、个人路径、真实消息或日志。
-- [ ] 如果发布页需要截图，截图必须由用户在真实发布物和脱敏环境中提供；当前仓库没有截图，不能生成或伪造占位截图。
+- [ ] 如果发布页需要真实发布物截图，截图必须由用户在真实发布物和脱敏环境中提供；仓库中的 [`docs/assets/imm-demo-hero.png`](assets/imm-demo-hero.png) 仅是 `--demo-screenshot` 生成的只读演示图，不代表已签名、公证的 `.app`，不能替代发布物验收。
 - [ ] 参照 [发布清单](../RELEASE_CHECKLIST.md) 计算发布物校验和、撰写限制说明，并由用户本人创建 tag/release。
 
 ## 官方资料
