@@ -8,5 +8,6 @@ DerivedData/
 *.out
 *.err
 .DS_Store
+/dist/
 Config/*.local.json
 outbox/

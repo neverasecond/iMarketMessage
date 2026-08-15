@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0-beta] - Unreleased
+
+- 增加标准本地 `.app` bundle 构建脚本，输出 ad-hoc 签名的 `iMM.app` 与 ZIP；不冒充 Developer ID 签名或 Apple 公证。
+- 增加用户主动授权的 macOS 本地通知，可与原有 JSON outbox 同时接收触发事件。
+- 增加基于 `SMAppService` 的后台监控注册、停用和状态展示；LaunchAgent 每 15 分钟运行内置 CLI。
+- CI 增加完整 Xcode 下的本地 App bundle、嵌入 helper、plist 和签名结构验证。
+- paired-self 真实 iMessage sender、重置确认和干净 Mac 权限验证仍是 beta 发布前阻塞项。
+
 ## [0.1.0-alpha] - 2026-08-15
 
 首个公开 alpha，产品定位为本地优先的 macOS 行情提醒工具（iMM），不构成投资建议。

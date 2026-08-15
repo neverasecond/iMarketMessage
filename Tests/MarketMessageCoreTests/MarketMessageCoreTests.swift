@@ -3,6 +3,18 @@ import Testing
 @testable import MarketMessageCore
 
 struct MarketMessageCoreTests {
+    @Test func compositeSinkForwardsToEveryEnabledDestination() async throws {
+        let first = MockNotificationSink()
+        let second = MockNotificationSink()
+        let sink = CompositeNotificationSink(sinks: [first, second])
+        let message = OutboxMessage(source: "market-message", id: "rule-test-20260815", text: "triggered")
+
+        try await sink.send(message)
+
+        #expect(await first.allMessages() == [message])
+        #expect(await second.allMessages() == [message])
+    }
+
     @Test func comparisonOperators() {
         #expect(ComparisonOperator.greaterThanOrEqual.matches(10, threshold: 10))
         #expect(ComparisonOperator.lessThanOrEqual.matches(10, threshold: 10))

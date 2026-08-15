@@ -1,5 +1,7 @@
 import SwiftUI
 import MarketMessageCore
+import ServiceManagement
+import UserNotifications
 
 @main
 struct MarketMessageApp: App {
@@ -26,6 +28,10 @@ final class RuleViewModel: ObservableObject {
     @Published var isChecking = false
     @Published var apiKeyInput = ""
     @Published var apiKeyStatus = "未检查"
+    @Published var notificationStatus = "未检查"
+    @Published var backgroundStatus = "未检查"
+    @Published var backgroundLastRun = "尚无后台运行记录"
+    @Published var localNotificationsEnabled = false
 
     let demoMode: Bool
     private let store: JSONRuleStore?
@@ -33,6 +39,9 @@ final class RuleViewModel: ObservableObject {
     private let outboxURL: URL?
     private let persistenceError: String?
     private let keyStore: KeychainAPIKeyStore?
+    private var notificationAuthorized = false
+    private static let localNotificationsPreferenceKey = "localNotificationsEnabled"
+    private static let monitorPlistName = "com.imarketmessage.monitor.plist"
 
     init(demoMode: Bool = false) {
         self.demoMode = demoMode
@@ -48,6 +57,9 @@ final class RuleViewModel: ObservableObject {
             self.selectedID = demoRule.id
             self.persistenceStatus = "演示模式：只读 · 仅内存"
             self.apiKeyStatus = "演示模式：不读取 Keychain"
+            self.notificationStatus = "演示模式：不请求通知权限"
+            self.backgroundStatus = "演示模式：不注册后台服务"
+            self.backgroundLastRun = "演示模式：无后台记录"
             return
         }
         if let support = try? JSONRuleStore.applicationSupportDirectory() {
@@ -72,6 +84,9 @@ final class RuleViewModel: ObservableObject {
             persistenceStatus = persistenceError ?? "不可持久化"
         }
         refreshAPIKeyStatus()
+        localNotificationsEnabled = UserDefaults.standard.bool(forKey: Self.localNotificationsPreferenceKey)
+        refreshBackgroundStatus()
+        Task { await refreshNotificationStatus() }
     }
 
     func addRule() {
@@ -124,13 +139,17 @@ final class RuleViewModel: ObservableObject {
             health = MonitorHealth(status: .configurationError, checkedAt: Date(), evaluatedRules: 0, triggeredRules: 0, message: persistenceStatus)
             return
         }
+        var sinks: [any NotificationSink] = [GatewayOutboxSink(directoryURL: outboxURL)]
+        if localNotificationsEnabled && notificationAuthorized {
+            sinks.append(LocalUserNotificationSink())
+        }
         let service = MonitoringService(
             ruleStore: store,
             providers: [
                 "cboe-vix": CboeVIXProvider(),
                 "alpha-vantage": AlphaVantageProvider(keyStore: keyStore)
             ],
-            sink: GatewayOutboxSink(directoryURL: outboxURL),
+            sink: CompositeNotificationSink(sinks: sinks),
             stateURL: stateURL
         )
         health = await service.runOnce()
@@ -165,6 +184,108 @@ final class RuleViewModel: ObservableObject {
         } catch {
             apiKeyStatus = "删除失败：" + error.localizedDescription
         }
+    }
+
+    func setLocalNotificationsEnabled(_ enabled: Bool) {
+        guard !demoMode else { return }
+        localNotificationsEnabled = enabled && notificationAuthorized
+        UserDefaults.standard.set(localNotificationsEnabled, forKey: Self.localNotificationsPreferenceKey)
+    }
+
+    func requestNotificationPermission() async {
+        guard !demoMode else { return }
+        do {
+            let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+            notificationAuthorized = granted
+            notificationStatus = granted ? "已授权" : "未授权；可在系统设置中更改"
+            if granted { setLocalNotificationsEnabled(true) }
+        } catch {
+            notificationAuthorized = false
+            notificationStatus = "请求失败：" + error.localizedDescription
+        }
+    }
+
+    func refreshNotificationStatus() async {
+        guard !demoMode else { return }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            notificationAuthorized = true
+            notificationStatus = settings.authorizationStatus == .provisional ? "临时授权" : "已授权"
+        case .denied:
+            notificationAuthorized = false
+            notificationStatus = "已拒绝；请在系统设置中更改"
+            setLocalNotificationsEnabled(false)
+        case .notDetermined:
+            notificationAuthorized = false
+            notificationStatus = "尚未请求"
+        @unknown default:
+            notificationAuthorized = false
+            notificationStatus = "未知状态"
+        }
+    }
+
+    func registerBackgroundMonitor() {
+        guard !demoMode else { return }
+        guard Bundle.main.bundleURL.pathExtension == "app" else {
+            backgroundStatus = "请先用本地构建脚本生成并运行 iMM.app"
+            return
+        }
+        do {
+            try SMAppService.agent(plistName: Self.monitorPlistName).register()
+            refreshBackgroundStatus()
+        } catch {
+            backgroundStatus = "启用失败：" + error.localizedDescription
+        }
+    }
+
+    func unregisterBackgroundMonitor() {
+        guard !demoMode else { return }
+        guard Bundle.main.bundleURL.pathExtension == "app" else {
+            backgroundStatus = "当前不是打包后的 iMM.app"
+            return
+        }
+        do {
+            try SMAppService.agent(plistName: Self.monitorPlistName).unregister()
+            refreshBackgroundStatus()
+        } catch {
+            backgroundStatus = "停用失败：" + error.localizedDescription
+        }
+    }
+
+    func refreshBackgroundStatus() {
+        guard !demoMode else { return }
+        guard Bundle.main.bundleURL.pathExtension == "app" else {
+            backgroundStatus = "源码运行模式；后台服务不可注册"
+            return
+        }
+        switch SMAppService.agent(plistName: Self.monitorPlistName).status {
+        case .enabled: backgroundStatus = "已启用（每 15 分钟检查）"
+        case .requiresApproval: backgroundStatus = "等待在“系统设置 → 登录项”中批准"
+        case .notRegistered: backgroundStatus = "未启用"
+        case .notFound: backgroundStatus = "App bundle 缺少后台服务配置"
+        @unknown default: backgroundStatus = "未知状态"
+        }
+        refreshBackgroundHealth()
+    }
+
+    private func refreshBackgroundHealth() {
+        guard let stateURL else { return }
+        let healthURL = stateURL.deletingLastPathComponent().appendingPathComponent("background-health.json")
+        guard let data = try? Data(contentsOf: healthURL) else {
+            backgroundLastRun = "尚无后台运行记录"
+            return
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let value = try? decoder.decode(MonitorHealth.self, from: data) else {
+            backgroundLastRun = "后台状态文件无法解析"
+            return
+        }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .medium
+        backgroundLastRun = formatter.string(from: value.checkedAt) + " · " + value.status.rawValue + " · 触发 " + String(value.triggeredRules)
     }
 
     var healthSummary: String {
@@ -274,6 +395,34 @@ struct RuleEditorView: View {
                     }
                     Stepper("冷却交易日：\(rule.cooldownTradingDays)", value: $rule.cooldownTradingDays, in: 0...90)
                     Toggle("仅在进入区域时触发", isOn: $rule.triggerOnEntryOnly)
+                }
+
+                Section("通知与后台") {
+                    HStack {
+                        Text("本地通知：" + model.notificationStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("请求权限") { Task { await model.requestNotificationPermission() } }
+                    }
+                    Toggle("规则触发时显示 macOS 通知", isOn: Binding(
+                        get: { model.localNotificationsEnabled },
+                        set: { model.setLocalNotificationsEnabled($0) }
+                    ))
+                    Text("后台监控：" + model.backgroundStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("最近后台检查：" + model.backgroundLastRun)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("启用后台监控") { model.registerBackgroundMonitor() }
+                        Button("停用") { model.unregisterBackgroundMonitor() }
+                        Button("刷新状态") { model.refreshBackgroundStatus() }
+                    }
+                    Text("后台服务由 macOS Service Management 管理；启用后可能需要在系统设置的登录项中批准。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("行情条件") {

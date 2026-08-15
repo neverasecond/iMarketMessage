@@ -1,5 +1,7 @@
 # iMarketMessage（iMM）
 
+> 当前开发版本正在准备 `v0.2.0-beta`：增加本地 `.app` 构建、macOS 通知和由 Service Management 管理的后台监控。当前公开稳定标签仍是 [`v0.1.0-alpha`](https://github.com/neverasecond/iMarketMessage/releases/tag/v0.1.0-alpha)；beta 尚未发布。
+
 iMarketMessage（面向用户的 macOS 应用名：iMM）是一个面向 macOS 14+ 的原生 Swift/SwiftUI 开源 MVP：按自定义证券代码、数据源、指标和阈值评估行情条件，在满足规则时将短消息写入本机安全出站队列，供用户另行授权的 iMessage gateway 发送。当前源码 alpha 版本线为 `v0.1.0-alpha`。
 
 Swift Package 同时保留 `MarketMessage` 兼容识别名；面向用户的可执行目标优先使用 `iMM`，这不代表另一个服务或账号。最终可分发 `.app` 的包装、签名和公证按发布者的实际方案确认，见 [开发者指南](DEVELOPMENT.md)、[限制说明](LIMITATIONS.md) 和 [发布清单](RELEASE_CHECKLIST.md)。
@@ -27,6 +29,17 @@ swift run --scratch-path /tmp/imarketmessage-app iMM
 CLI 会输出结构化 JSON 健康状态。默认使用 Application Support 下的 `rules.json`、`Outbox/` 和 `runtime-state.json`；`--config`、`--outbox`、`--state` 可覆盖。上面的 CLI 示例会访问 Cboe VIX 日线；测试完全不联网。临时 scratch 目录不属于仓库，完成后可删除。
 
 测试使用 Swift Testing；完整 Xcode toolchain 会提供测试运行时。精简 CommandLineTools 若报告缺少 `lib_TestingInterop.dylib`，请在完整 Xcode 下运行，不要把系统运行时库加入仓库。
+
+### 构建本机 App（v0.2.0-beta 开发中）
+
+完整 Xcode 已被选中时，可在自己的 Mac 上生成 ad-hoc 签名的 App 和 ZIP：
+
+```sh
+scripts/build-local-app.sh
+open dist/iMM.app
+```
+
+输出只适合从可信源码本机构建和测试，不是 Developer ID 签名或 Apple 公证的公开二进制。首次启用本地通知时由用户主动点击“请求权限”；后台监控由 App 内按钮通过 macOS `SMAppService` 注册或停用，系统可能要求在“系统设置 → 通用 → 登录项”中批准。
 
 UI 可以浏览、添加、编辑、删除、启用/禁用规则，并选择 provider、指标、比较符、阈值、冷却交易日和“仅首次进入区域”。规则保存到 `~/Library/Application Support/MarketMessage/rules.json`，写入采用原子替换和 `0600` 权限。
 

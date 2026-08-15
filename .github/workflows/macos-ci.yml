@@ -115,3 +115,15 @@ jobs:
           trap 'rm -rf -- "$ci_tmp"' EXIT
           swift build --scratch-path "$ci_tmp/build"
           swift test --scratch-path "$ci_tmp/test"
+
+      - name: Build local app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_tmp="$(mktemp -d /tmp/imarketmessage-package-ci.XXXXXX)"
+          trap 'rm -rf -- "$package_tmp"' EXIT
+          scripts/build-local-app.sh --output "$package_tmp"
+          test -x "$package_tmp/iMM.app/Contents/MacOS/iMM"
+          test -x "$package_tmp/iMM.app/Contents/MacOS/market-message-cli"
+          test -f "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.monitor.plist"
+          codesign --verify --deep --strict --verbose=2 "$package_tmp/iMM.app"

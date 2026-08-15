@@ -7,7 +7,7 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        // Keep the documented iMM/iMarketMessage names first in the alpha
+        // Keep the documented iMM/iMarketMessage names first in the beta
         // source package; legacy MarketMessage products remain aliases so an
         // existing local build script does not silently break during rename.
         .library(name: "iMarketMessageCore", targets: ["MarketMessageCore"]),

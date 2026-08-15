@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UserNotifications)
+import UserNotifications
+#endif
 
 public struct OutboxMessage: Codable, Equatable, Sendable {
     public let source: String
@@ -17,6 +20,8 @@ public enum NotificationSinkError: Error, Equatable, LocalizedError, Sendable {
     case messageTooLong(limit: Int)
     case invalidIdentifier
     case writeFailed(String)
+    case localNotificationUnavailable
+    case localNotificationFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -24,12 +29,62 @@ public enum NotificationSinkError: Error, Equatable, LocalizedError, Sendable {
         case .messageTooLong(let limit): return "通知超过 " + String(limit) + " 字节限制"
         case .invalidIdentifier: return "通知 ID 不是安全文件名"
         case .writeFailed(let message): return "通知写入失败：" + message
+        case .localNotificationUnavailable: return "当前环境不支持 macOS 本地通知"
+        case .localNotificationFailed(let message): return "本地通知失败：" + message
         }
     }
 }
 
 public protocol NotificationSink: Sendable {
     func send(_ message: OutboxMessage) async throws
+}
+
+/// Delivers the same deterministic event to each configured destination.
+/// Callers should include only destinations that the user has enabled and
+/// authorized. Delivery stops at the first error so MonitoringService does not
+/// persist a successful trigger state when a requested destination failed.
+public struct CompositeNotificationSink: NotificationSink {
+    public let sinks: [any NotificationSink]
+
+    public init(sinks: [any NotificationSink]) {
+        self.sinks = sinks
+    }
+
+    public func send(_ message: OutboxMessage) async throws {
+        for sink in sinks {
+            try await sink.send(message)
+        }
+    }
+}
+
+/// Schedules an immediate local notification. Authorization is intentionally
+/// managed by the GUI; a background helper must never cause a surprise prompt.
+public struct LocalUserNotificationSink: NotificationSink {
+    public let title: String
+
+    public init(title: String = "iMarketMessage") {
+        self.title = title
+    }
+
+    public func send(_ message: OutboxMessage) async throws {
+        #if canImport(UserNotifications)
+        guard !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NotificationSinkError.emptyMessage
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = message.text
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: message.id, content: content, trigger: nil)
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+        } catch {
+            throw NotificationSinkError.localNotificationFailed(error.localizedDescription)
+        }
+        #else
+        throw NotificationSinkError.localNotificationUnavailable
+        #endif
+    }
 }
 
 public struct GatewayOutboxSink: NotificationSink {
