@@ -28,9 +28,16 @@ for tool in swift xcodebuild plutil codesign ditto shasum; do
     fi
 done
 
-developer_dir="$(xcode-select -p 2>/dev/null || true)"
-if [[ "$developer_dir" != *Xcode.app/Contents/Developer ]]; then
-    echo "A full Xcode installation must be selected; CommandLineTools alone is not supported." >&2
+developer_dir="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || true)}"
+case "$developer_dir" in
+    /Applications/Xcode*.app/Contents/Developer) ;;
+    *)
+        echo "A full Xcode installation must be selected; CommandLineTools alone is not supported." >&2
+        exit 1
+        ;;
+esac
+if [[ ! -x "$developer_dir/usr/bin/xcodebuild" ]]; then
+    echo "The selected Xcode developer directory does not contain xcodebuild: $developer_dir" >&2
     exit 1
 fi
 
