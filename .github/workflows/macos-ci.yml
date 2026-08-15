@@ -2,10 +2,16 @@ name: macOS CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, agent/v020-beta]
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_candidate:
+        description: "Require the release-only .icns gate"
+        required: false
+        default: false
+        type: boolean
 
 # This workflow only needs to read source; it does not publish, sign, or notarize.
 permissions:
@@ -120,10 +126,87 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          package_tmp="$(mktemp -d /tmp/imarketmessage-package-ci.XXXXXX)"
-          trap 'rm -rf -- "$package_tmp"' EXIT
+          package_tmp="$(mktemp -d "$RUNNER_TEMP/imarketmessage-package-ci.XXXXXX")"
+          echo "PACKAGE_TMP=$package_tmp" >> "$GITHUB_ENV"
           scripts/build-local-app.sh --output "$package_tmp"
           test -x "$package_tmp/iMM.app/Contents/MacOS/iMM"
           test -x "$package_tmp/iMM.app/Contents/MacOS/market-message-cli"
+          test -x "$package_tmp/iMM.app/Contents/MacOS/iMM-gateway"
           test -f "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.monitor.plist"
+          test -f "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.gateway.plist"
+          icon_file="$(plutil -extract CFBundleIconFile raw "$package_tmp/iMM.app/Contents/Info.plist")"
+          case "$icon_file" in
+            AppIcon-1024.png) test -s "$package_tmp/iMM.app/Contents/Resources/AppIcon-1024.png" ;;
+            AppIcon.icns) test -s "$package_tmp/iMM.app/Contents/Resources/AppIcon.icns" ;;
+            *) echo "Unexpected CFBundleIconFile: $icon_file" >&2; exit 1 ;;
+          esac
+          plutil -lint "$package_tmp/iMM.app/Contents/Info.plist" \
+            "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.monitor.plist" \
+            "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.gateway.plist"
+          test "$(plutil -extract CFBundleIdentifier raw "$package_tmp/iMM.app/Contents/Info.plist")" = "com.imarketmessage.app"
+          test "$(plutil -extract CFBundleShortVersionString raw "$package_tmp/iMM.app/Contents/Info.plist")" = "0.2.0-beta"
+          test -n "$(plutil -extract NSAppleEventsUsageDescription raw "$package_tmp/iMM.app/Contents/Info.plist")"
+          test "$(plutil -extract Label raw "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.monitor.plist")" = "com.imarketmessage.monitor"
+          test "$(plutil -extract BundleProgram raw "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.monitor.plist")" = "Contents/MacOS/market-message-cli"
+          test "$(plutil -extract 'ProgramArguments.0' raw "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.monitor.plist")" = "Contents/MacOS/market-message-cli"
+          test "$(plutil -extract 'ProgramArguments.1' raw "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.monitor.plist")" = "--background"
+          test "$(plutil -extract Label raw "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.gateway.plist")" = "com.imarketmessage.gateway"
+          test "$(plutil -extract BundleProgram raw "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.gateway.plist")" = "Contents/MacOS/iMM-gateway"
+          test "$(plutil -extract 'ProgramArguments.0' raw "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.gateway.plist")" = "Contents/MacOS/iMM-gateway"
+          test "$(plutil -extract 'ProgramArguments.1' raw "$package_tmp/iMM.app/Contents/Library/LaunchAgents/com.imarketmessage.gateway.plist")" = "--send"
           codesign --verify --deep --strict --verbose=2 "$package_tmp/iMM.app"
+          codesign_details="$(codesign -dv --verbose=4 "$package_tmp/iMM.app" 2>&1 || true)"
+          printf '%s\n' "$codesign_details"
+          printf '%s\n' "$codesign_details" | grep -q 'Signature=adhoc'
+          test -s "$package_tmp/iMM-v0.2.0-beta-local.zip"
+          test -s "$package_tmp/iMM-v0.2.0-beta-local.zip.sha256"
+          (cd "$package_tmp" && shasum -a 256 -c iMM-v0.2.0-beta-local.zip.sha256)
+          unzip_listing="$(mktemp "$RUNNER_TEMP/imarketmessage-zip-list.XXXXXX")"
+          unzip -Z1 "$package_tmp/iMM-v0.2.0-beta-local.zip" | tee "$unzip_listing"
+          grep -Fxq 'iMM.app/Contents/Info.plist' "$unzip_listing"
+          grep -Fxq 'iMM.app/Contents/MacOS/iMM' "$unzip_listing"
+          grep -Fxq 'iMM.app/Contents/MacOS/market-message-cli' "$unzip_listing"
+          grep -Fxq 'iMM.app/Contents/MacOS/iMM-gateway' "$unzip_listing"
+          grep -Fxq "iMM.app/Contents/Resources/$icon_file" "$unzip_listing"
+
+      - name: Validate release-only AppIcon.icns gate
+        if: ${{ inputs.release_candidate == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v iconutil >/dev/null 2>&1
+          test -f Packaging/AppIcon.icns
+          iconutil -c icns Packaging/AppIcon.iconset -o /tmp/imarketmessage-AppIcon-ci.icns
+          cmp -s Packaging/AppIcon.icns /tmp/imarketmessage-AppIcon-ci.icns
+          test -s Packaging/AppIcon.icns
+
+      - name: Report development icon status
+        if: ${{ inputs.release_candidate != true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s Packaging/AppIcon-1024.png
+          if [[ -f Packaging/AppIcon.icns ]]; then
+            echo "Packaging/AppIcon.icns is present; release candidates must validate it with iconutil."
+          else
+            echo "No Packaging/AppIcon.icns: this CI run remains development-only and is not release-ready."
+          fi
+
+      - name: Upload local app artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: iMM-v0.2.0-beta-local-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 3
+          path: |
+            ${{ env.PACKAGE_TMP }}/iMM-v0.2.0-beta-local.zip
+            ${{ env.PACKAGE_TMP }}/iMM-v0.2.0-beta-local.zip.sha256
+
+      - name: Clean CI package scratch
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${PACKAGE_TMP:-}" && -d "$PACKAGE_TMP" ]]; then
+            rm -rf -- "$PACKAGE_TMP"
+          fi

@@ -1,16 +1,16 @@
-# iMarketMessage（iMM）v0.1.0-alpha 发布清单
+# iMarketMessage（iMM）v0.2.0-beta 发布清单
 
-这份清单用于本地预发布和 GitHub Release 准备。发布者必须逐项确认；本仓库不会创建仓库、打 tag、推送、签名、提交公证或发布外部资产。
+这份清单用于本地预发布和 GitHub Release 准备。发布者必须逐项确认；本仓库不会自动创建仓库、打 tag、签名、提交公证或发布外部资产，推送和发布需由用户明确授权后执行。
 
 ## 当前交付形态
 
-`v0.1.0-alpha` 当前按“源码 alpha、开发者可运行”交付：仓库提供 Swift Package 源码、测试、配置示例和只读 gateway 预览，不提供签名/公证的 `.app`、DMG 或真实 iMessage sender。若本次只发布源码 tag/Release，将下方“应用包装与用户体验”“Developer ID 签名与公证”以及二进制归档条目标记为“不适用”，并在 Release notes 中明确 source-only；这些可选条目不应被解读为本仓库已经提供相应附件。
+`v0.2.0-beta` 当前按“可信源码本机构建、ad-hoc 签名、CI 短期 artifact”交付：仓库提供 Swift Package 源码、测试、`iMM.app` 构建脚本、ZIP 和 `.zip.sha256` 生成路径，但不提供 Developer ID 签名、公证、staple 或 Mac App Store 产品。Actions artifact 仅用于下载到真实 Mac 验证，不是公开 Release。若本次仍只发布源码 tag/Release，将二进制附件条目标记为“不适用”，并在 Release notes 中明确 source-only。
 
 ## 发布身份
 
 - [ ] 公开仓库名确认是 `iMarketMessage`。
 - [ ] 面向用户的 macOS 应用名确认是 `iMM`；`MarketMessage` 兼容目标与用户可见名称的差异已在发布说明中解释。
-- [ ] 版本号和 tag 确认为 `v0.1.0-alpha`，并与 [`CHANGELOG.md`](CHANGELOG.md) 一致；只有发布二进制时才另外核对 app bundle 和归档文件名，source-only 只核对源码归档与 Release 标题。
+- [ ] 版本号和 tag 确认为 `v0.2.0-beta`，并与 [`CHANGELOG.md`](CHANGELOG.md)、Info.plist `CFBundleShortVersionString` 和归档文件名一致；source-only 只核对源码归档与 Release 标题。
 - [ ] 发布说明包含“本地优先的 macOS 行情提醒工具，不构成投资建议”、数据延迟/限流、outbox/gateway 边界和当前 provider 限制。
 
 ## 代码、构建与测试
@@ -28,11 +28,22 @@
 - [ ] 如进行了 CLI smoke test，已说明它访问 Cboe VIX 或其他外部服务，并确认服务条款、速率限制和结果日期。
 - [ ] 验证失败时停止发布；不要把系统运行时库、临时补丁或本机路径提交进仓库。
 
+## CI 包装与供应链边界
+
+- [ ] `agent/v020-beta` 的完整 Xcode workflow 通过；workflow 只读仓库内容，不持有签名、公证或发布 secrets。
+- [ ] CI 已验证 bundle 结构、Info.plist（含 `NSAppleEventsUsageDescription`）、monitor/gateway 两个内嵌 LaunchAgent plist、`market-message-cli`/`iMM-gateway` helper、`AppIcon-1024.png`、嵌套 ad-hoc 签名、ZIP 内容和 `.zip.sha256`；artifact 下载后重新运行 `shasum -a 256 -c`。
+- [ ] `actions/upload-artifact` 已固定到审查过的 commit SHA（当前 workflow 标注 v4.6.2）；它只保留短期 CI artifact，未把 artifact 当成公开 Release 或 Developer ID/公证证明。
+- [ ] 若手动运行 workflow 的 `release_candidate=true`，`Packaging/AppIcon.iconset` 和 `Packaging/AppIcon.icns` 已用完整 Xcode `iconutil` 生成、比较并验证；当前缺少 `.icns` 时必须停止 release gate，不能伪造或改名 PNG。
+
 ## 应用包装与用户体验（仅在发布二进制附件时适用）
 
-- [ ] 实际 `.app` bundle 已由发布者准备，Info.plist、bundle identifier、版本、架构、图标和嵌套代码经过检查；未把裸 SwiftPM 可执行文件直接冒充正式 app。
+- [ ] 实际 `.app` bundle 已由完整 Xcode 构建，Info.plist、bundle identifier、版本、架构、开发 PNG/正式 `.icns` 图标和嵌套代码经过检查；未把裸 SwiftPM 可执行文件直接冒充正式 app。
+- [ ] `iMM-v0.2.0-beta-local.zip` 与 `.zip.sha256` 只包含必要的 app/资源；校验和与附件一一对应且不含个人路径。
 - [ ] 首次启动、规则增删改、Keychain key 保存/删除、outbox 权限和错误状态在干净 Mac 上验证。
-- [ ] LaunchAgent 仍是模板，不会随安装自动启用；安装、观察、卸载步骤由用户另行执行。
+- [ ] 使用独立 paired-self 测试数据验证 `iMM-gateway --dry-run` 不写入，`iMM-gateway --send` 才消费；Apple Events 允许/拒绝、无 pairing、失败/重试和无 recipient 参数均有记录。
+- [ ] 通知允许/拒绝、后台登录项批准、Apple Events 允许/拒绝、重启、睡眠/唤醒、停用、升级和卸载在真实 macOS 14+ 干净账户上逐项记录；未验证项明确标注。
+- [ ] `scripts/install-local-app.sh` 和 `scripts/uninstall-local-app.sh` 的精确目标、确认提示、`launchctl bootout` 和默认数据保留行为已实际演练；没有广泛删除用户目录。
+- [ ] LaunchAgent 不会随安装自动启用；用户在 App 内通过 `SMAppService` 注册/停用，安装/卸载说明见 [`docs/V0.2_UPGRADE.md`](docs/V0.2_UPGRADE.md)。
 - [ ] 如果发布页需要真实发布物截图，截图由用户在脱敏环境中提供；仓库中的 [`docs/assets/imm-demo-hero.png`](docs/assets/imm-demo-hero.png) 仅是 `--demo-screenshot` 生成的只读演示图，不代表已签名、公证的 `.app`，也不能替代发布物验收。
 
 ## Developer ID 签名与公证（仅在发布二进制附件时适用，用户本人操作）
@@ -49,8 +60,8 @@
 
 - [ ] 若发布二进制，归档只包含必要的 `.app`/安装材料、许可证和发布说明；若只发布源码，则归档只包含源码和必要文档；两种形态都不得包含 `.build`、CSR、私钥、Keychain 导出、outbox、真实规则或测试日志。
 - [ ] 为每个公开附件计算 SHA-256，并把校验和与附件一一对应；校验和记录中没有个人路径。
-- [ ] 用户本人确认 GitHub Actions 的 CI 已通过；workflow 权限保持最小读权限，不把签名或公证 secrets 加到本 alpha。
-- [ ] 用户本人创建 `v0.1.0-alpha` tag 和 GitHub Release；源码路径上传源码归档并明确 source-only，二进制路径才上传经签名、公证、staple 和干净 Mac 验证的附件。
+- [ ] 用户本人确认 GitHub Actions 的 CI 已通过；workflow 权限保持最小读权限，不把签名或公证 secrets 加到本 beta。
+- [ ] 用户本人创建 `v0.2.0-beta` tag 和 GitHub Release；源码路径上传源码归档并明确 source-only，二进制路径才上传经 Developer ID、公证、staple 和干净 Mac 验证的附件。
 - [ ] 发布说明链接到 [`LIMITATIONS.md`](LIMITATIONS.md)、[`PRIVACY.md`](PRIVACY.md)、[`SECURITY.md`](SECURITY.md) 和 [`NOTICE`](NOTICE)。
 
 ## 发布后

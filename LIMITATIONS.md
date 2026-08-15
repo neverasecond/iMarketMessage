@@ -1,6 +1,6 @@
-# v0.1.0-alpha 限制说明
+# v0.2.0-beta 限制说明
 
-iMarketMessage（iMM）首版是本地优先的 macOS 行情提醒工具，不构成投资、交易、税务、法律或会计建议。它只提供规则评估和本地 outbox，不保证行情准确、及时、完整，也不保证提醒一定送达。
+iMarketMessage（iMM）beta 仍是本地优先的 macOS 行情提醒工具，不构成投资、交易、税务、法律或会计建议。它只提供规则评估、本地通知和本地 outbox，不保证行情准确、及时、完整，也不保证提醒一定送达。
 
 ## 行情与规则
 
@@ -13,17 +13,25 @@ iMarketMessage（iMM）首版是本地优先的 macOS 行情提醒工具，不�
 ## 消息与后台运行
 
 - 本项目不读取 Messages 数据库、联系人、电话号码或 chat ID，不自动发现收件人，也不直接发送 iMessage。
-- `GatewayOutboxSink` 只向用户指定的本地目录写入受限 JSON；真正的发送、paired-self、权限提示、重试和 durable ACK 属于另一个必须单独审查和授权的 gateway。
+- `GatewayOutboxSink` 只向用户指定的本地目录写入受限 JSON；仓库内 gateway companion 只有显式 `--send` 才会消费并通过 Apple Events 发送到本机 paired-self，仍需用户单独审查授权。它不接受 recipient 参数，且不由主 App/安装脚本自动启用。
 - outbox 文件不是送达回执。重复运行使用确定性 ID，消费者必须自行做幂等处理；本仓库不保证消费者存在、在线或兼容。
-- LaunchAgent 文件只是示例模板。项目不会自动安装、启用、升级或卸载后台服务；后台频率、日志、崩溃恢复和机器睡眠行为由用户自行管理。
+- 打包 App 的 LaunchAgent 只会在用户通过 `SMAppService` 明确注册并批准后运行；构建、CI 和安装脚本不会自动启用它。安装脚本只能对当前用户的精确 label 执行 `launchctl bootout`，不能代替 App 内 `unregister()`，卸载前仍需在 App 内停用。
+- `Config/com.marketmessage.monitor.plist.example` 是旧式占位模板，不能直接当作打包 App 的服务配置。后台频率、日志、崩溃恢复和机器睡眠行为由用户自行管理。
 
 ## 安全、隐私与分发
 
 - 没有遥测、广告、云端账户或内置分析；规则、运行状态和 outbox 保存在本机，但其他本机用户、备份、同步目录或恶意进程仍可能影响隐私和完整性。
 - Alpha Vantage key 通过 Keychain 接口保存，不写入规则 JSON；Keychain 权限、备份和删除必须由用户在自己的 Mac 上检查。
 - 首版不提供自动更新、安全公告推送、托管 gateway、集中审计、跨设备同步或恢复服务。
-- 本仓库的 CI 只验证完整 Xcode 下的 `swift build`/`swift test`，不签名、不公证、不发布；Developer ID 证书、私钥、公证和 Gatekeeper 验证必须由发布者本人完成，见 [`docs/APPLE_SIGNING.md`](docs/APPLE_SIGNING.md)。
-- 当前 SwiftPM 构建目标和最终用户可分发 `.app` 的包装可能仍需发布者准备；不要把未经签名、公证和干净 Mac 验证的构建称为正式发行版。
+- CI 在完整 Xcode runner 上验证 `swift build`/`swift test`、bundle/plist、ad-hoc 签名、ZIP 内容和 SHA-256，并可上传短期 Actions artifact；它不执行 Developer ID 签名、公证或发布。`actions/upload-artifact` 只作为 CI 交付通道，不能当作公开 Release 或供应链证明。
+- `scripts/build-local-app.sh` 生成的 app/ZIP/`.sha256` 仅供可信源码的本机构建和测试；它没有 Developer ID 身份、Apple 公证、staple 或 Gatekeeper 放行。Release 前必须由发布者本人另行完成签名、公证和干净 Mac 验证，见 [`docs/APPLE_SIGNING.md`](docs/APPLE_SIGNING.md)。
+- 当前 bundle 纳入 `Packaging/AppIcon-1024.png` 作为开发资源，但尚未提供可声称完成的 `AppIcon.icns`。正式发布前需使用完整 Xcode `iconutil` 生成并验证 `.icns`；CI 的 release-only gate 会在缺少该产物时停止。
+- `iMM-gateway` 的 `--send` 会启动 `/usr/bin/osascript` 与 Messages 交互；Apple Events 权限、Messages 登录状态、paired-self 文件、发送失败/重试和真实送达仍未由静态 CI 证明，必须在真实 Mac 上逐项验证。
+
+## 本地安装与真实 Mac 验证
+
+- 安装/升级脚本只替换明确的 `iMM.app`，默认保留 `~/Library/Application Support/MarketMessage`；卸载只有在用户明确传入 `--remove-data` 并确认时才删除该精确目录。Keychain 中的 API key 不由脚本删除。
+- 尚未由本仓库的静态 CI 证明通知授权/拒绝、登录项批准、重启、睡眠唤醒、后台停用、升级回滚、卸载后服务残留或不同架构上的 Gatekeeper 行为；这些必须在真实 macOS 14+ 干净账户按 [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) 逐项记录。
 
 ## 支持范围
 

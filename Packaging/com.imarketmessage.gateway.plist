@@ -3,18 +3,18 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.imarketmessage.monitor</string>
+    <string>com.imarketmessage.gateway</string>
     <key>BundleProgram</key>
-    <string>Contents/MacOS/market-message-cli</string>
+    <string>Contents/MacOS/iMM-gateway</string>
     <key>ProgramArguments</key>
     <array>
-        <string>Contents/MacOS/market-message-cli</string>
-        <string>--background</string>
+        <string>Contents/MacOS/iMM-gateway</string>
+        <string>--send</string>
     </array>
     <key>RunAtLoad</key>
-    <true/>
+    <false/>
     <key>StartInterval</key>
-    <integer>900</integer>
+    <integer>30</integer>
     <key>ProcessType</key>
     <string>Background</string>
     <key>StandardOutPath</key>

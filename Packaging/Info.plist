@@ -10,6 +10,8 @@
     <string>iMM</string>
     <key>CFBundleIdentifier</key>
     <string>com.imarketmessage.app</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon-1024.png</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -24,6 +26,8 @@
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>仅在你明确启用 paired-self gateway 后，iMM 才会通过 Apple Events 向 Messages 发送已配对的提醒；不会读取消息数据库或联系人。</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

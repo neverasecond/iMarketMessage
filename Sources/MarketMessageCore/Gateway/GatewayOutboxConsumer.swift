@@ -8,16 +8,24 @@ public protocol GatewayMessageSender: Sendable {
 
 public enum GatewaySenderError: Error, Equatable, LocalizedError, Sendable {
     case unavailableInBeta
+    case pairingRequired
+    case pairingStateInvalid
+    case invalidEnvelope
 
     public var errorDescription: String? {
-        "真实 gateway sender 尚未包含在 beta foundation 中"
+        switch self {
+        case .unavailableInBeta: return "真实 gateway sender 尚未启用"
+        case .pairingRequired: return "gateway 尚未完成 paired-self 配对"
+        case .pairingStateInvalid: return "gateway 配对状态无效"
+        case .invalidEnvelope: return "gateway envelope 文本无效"
+        }
     }
 }
 
-/// A guarded sender for callers that need an explicit non-transport value.
-/// It never invokes external I/O and deliberately throws, so a consumer can
+/// A guarded sender for callers that explicitly need a no-send value.  It
+/// never invokes external I/O and deliberately throws, so a consumer can
 /// never turn this no-op into a `sent` ACK. Use `GatewayOutboxPreview` for a
-/// truly read-only dry-run.
+/// truly read-only dry-run; use `PairedSelfIMessageSender` for explicit send.
 public struct DryRunGatewaySender: GatewayMessageSender {
     public init() {}
 

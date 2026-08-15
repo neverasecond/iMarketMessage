@@ -110,7 +110,7 @@ public struct PairedSelfTarget: Codable, Equatable, Hashable, Sendable {
     public init(rawValue: String) throws {
         let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, value.utf8.count <= 256,
-              !value.contains("\n"), !value.contains("\r")
+              !value.contains("\n"), !value.contains("\r"), !value.contains("\0")
         else {
             throw GatewayStorageError.invalidTarget
         }
@@ -179,6 +179,20 @@ public struct GatewayPairingStore: Sendable {
             throw GatewayStorageError.invalidPairingState
         }
         return target
+    }
+
+    /// Remove an existing paired-self file.  Callers must put this behind an
+    /// explicit user-confirmation flow; there is deliberately no CLI reset
+    /// flag and firstSetup() still refuses to overwrite an existing file.
+    public func reset() throws {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        try GatewayFileSecurity.requirePrivateDirectory(fileURL.deletingLastPathComponent())
+        try GatewayFileSecurity.requirePrivateFile(fileURL)
+        do {
+            try FileManager.default.removeItem(at: fileURL)
+        } catch {
+            throw GatewayStorageError.writeFailed
+        }
     }
 }
 

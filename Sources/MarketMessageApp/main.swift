@@ -32,16 +32,22 @@ final class RuleViewModel: ObservableObject {
     @Published var backgroundStatus = "未检查"
     @Published var backgroundLastRun = "尚无后台运行记录"
     @Published var localNotificationsEnabled = false
+    @Published var pairingTargetInput = ""
+    @Published var pairingStatus = "未检查"
+    @Published var pairingSendStatus = "尚未发送"
+    @Published var isPairingSendInProgress = false
 
     let demoMode: Bool
     private let store: JSONRuleStore?
     private let stateURL: URL?
     private let outboxURL: URL?
+    private let pairingURL: URL?
     private let persistenceError: String?
     private let keyStore: KeychainAPIKeyStore?
     private var notificationAuthorized = false
     private static let localNotificationsPreferenceKey = "localNotificationsEnabled"
     private static let monitorPlistName = "com.imarketmessage.monitor.plist"
+    private static let pairingFileName = "paired-self.json"
 
     init(demoMode: Bool = false) {
         self.demoMode = demoMode
@@ -52,6 +58,7 @@ final class RuleViewModel: ObservableObject {
             self.store = nil
             self.stateURL = nil
             self.outboxURL = nil
+            self.pairingURL = nil
             self.persistenceError = "演示模式：仅使用内存示例，不读取或写入本机数据。"
             self.rules = [demoRule]
             self.selectedID = demoRule.id
@@ -60,17 +67,20 @@ final class RuleViewModel: ObservableObject {
             self.notificationStatus = "演示模式：不请求通知权限"
             self.backgroundStatus = "演示模式：不注册后台服务"
             self.backgroundLastRun = "演示模式：无后台记录"
+            self.pairingStatus = "演示模式：不读取配对状态"
             return
         }
         if let support = try? JSONRuleStore.applicationSupportDirectory() {
             self.store = JSONRuleStore(fileURL: support.appendingPathComponent("rules.json"))
             self.stateURL = support.appendingPathComponent("runtime-state.json")
             self.outboxURL = support.appendingPathComponent("Outbox", isDirectory: true)
+            self.pairingURL = support.appendingPathComponent(Self.pairingFileName)
             self.persistenceError = nil
         } else {
             self.store = nil
             self.stateURL = nil
             self.outboxURL = nil
+            self.pairingURL = nil
             self.persistenceError = "无法定位 Application Support/MarketMessage，规则不会被写入临时目录。"
         }
         if let store {
@@ -84,6 +94,7 @@ final class RuleViewModel: ObservableObject {
             persistenceStatus = persistenceError ?? "不可持久化"
         }
         refreshAPIKeyStatus()
+        refreshPairingStatus()
         localNotificationsEnabled = UserDefaults.standard.bool(forKey: Self.localNotificationsPreferenceKey)
         refreshBackgroundStatus()
         Task { await refreshNotificationStatus() }
@@ -161,6 +172,84 @@ final class RuleViewModel: ObservableObject {
             apiKeyStatus = (try keyStore.readKey(for: "alpha-vantage")) == nil ? "未配置" : "已配置（不会回显）"
         } catch {
             apiKeyStatus = "Keychain 不可用：" + error.localizedDescription
+        }
+    }
+
+    /// Refresh only a redacted pairing state.  The paired target is never
+    /// copied into a status string, log, notification, or view text.
+    func refreshPairingStatus() {
+        guard !demoMode else { return }
+        guard let pairingURL else {
+            pairingStatus = "配对状态不可用"
+            return
+        }
+        do {
+            pairingStatus = try GatewayPairingStore(fileURL: pairingURL).load() == nil
+                ? "未配对"
+                : "已配对（目标已隐藏）"
+        } catch {
+            pairingStatus = "配对状态不可用"
+        }
+    }
+
+    /// First-run setup is intentionally one-shot.  A second save is rejected
+    /// by GatewayPairingStore instead of silently changing the destination.
+    func pairSelf() {
+        guard !demoMode, let pairingURL else { return }
+        let input = pairingTargetInput
+        guard let target = try? PairedSelfTarget(rawValue: input) else {
+            pairingTargetInput = ""
+            pairingStatus = "目标无效（未保存）"
+            return
+        }
+        do {
+            try GatewayPairingStore(fileURL: pairingURL).firstSetup(target: target)
+            pairingTargetInput = ""
+            pairingStatus = "已配对（目标已隐藏）"
+        } catch let error as GatewayStorageError where error == .alreadyPaired {
+            pairingTargetInput = ""
+            pairingStatus = "已配对（目标已隐藏）"
+        } catch {
+            pairingTargetInput = ""
+            pairingStatus = "配对失败（未保存）"
+        }
+    }
+
+    /// This method is called only from the destructive confirmation action in
+    /// the pairing UI.  It does not accept a replacement target or a CLI flag.
+    func resetPairingAfterExplicitConfirmation() {
+        guard !demoMode, let pairingURL else { return }
+        do {
+            try GatewayPairingStore(fileURL: pairingURL).reset()
+            pairingTargetInput = ""
+            pairingStatus = "未配对"
+        } catch {
+            pairingStatus = "重置失败（配对未改变）"
+        }
+    }
+
+    /// Consume the existing outbox once through the same paired-self sender
+    /// used by the gateway CLI.  No target input is accepted here; the sender
+    /// re-reads the private pairing store and reports only a redacted result.
+    func sendOnePairedMessage() async {
+        guard !demoMode, let outboxURL, let pairingURL else { return }
+        isPairingSendInProgress = true
+        defer { isPairingSendInProgress = false }
+        let result = await GatewayOutboxConsumer(
+            outboxURL: outboxURL,
+            pairingURL: pairingURL,
+            sender: PairedSelfIMessageSender(pairingURL: pairingURL)
+        ).processOnce()
+        if result.waitingForPairing {
+            pairingSendStatus = "未配对；没有发送"
+        } else if result.error != nil || result.failedCount > 0 || result.rejectedCount > 0 || result.quarantinedCount > 0 {
+            pairingSendStatus = "发送失败；请查看 gateway 状态"
+        } else if result.sentCount > 0 {
+            pairingSendStatus = "已发送 (result.sentCount) 条"
+        } else if result.duplicateCount > 0 {
+            pairingSendStatus = "无新消息（重复已跳过）"
+        } else {
+            pairingSendStatus = "无待发送消息"
         }
     }
 
@@ -356,6 +445,7 @@ struct RuleEditorView: View {
     @Binding var rule: MarketRule
     @ObservedObject var model: RuleViewModel
     var onSave: () -> Void
+    @State private var pairingResetConfirmation = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -425,6 +515,35 @@ struct RuleEditorView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Section("iMessage paired-self") {
+                    Text("配对状态：" + model.pairingStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SecureField("输入本人 iMessage 目标（不会显示或记录）", text: $model.pairingTargetInput)
+                        .textContentType(.emailAddress)
+                        .privacySensitive()
+                    HStack {
+                        Button("首次配对") { model.pairSelf() }
+                        Button("重置配对", role: .destructive) {
+                            pairingResetConfirmation = true
+                        }
+                        Button("刷新") { model.refreshPairingStatus() }
+                    }
+                    HStack {
+                        Text("发送状态：" + model.pairingSendStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(model.isPairingSendInProgress ? "发送中…" : "发送一次") {
+                            Task { await model.sendOnePairedMessage() }
+                        }
+                        .disabled(model.isPairingSendInProgress)
+                    }
+                    Text("只会发送到这一次配对保存的本人目标；outbox 和命令行都不能指定收件人。重置后必须再次确认并输入目标。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("行情条件") {
                     ForEach($rule.conditions) { $condition in
                         ConditionEditor(condition: $condition)
@@ -445,6 +564,14 @@ struct RuleEditorView: View {
             .disabled(model.demoMode)
         }
         .navigationTitle(rule.name.isEmpty ? "编辑规则" : rule.name)
+        .alert("确认重置 iMessage 配对？", isPresented: $pairingResetConfirmation) {
+            Button("取消", role: .cancel) {}
+            Button("确认重置", role: .destructive) {
+                model.resetPairingAfterExplicitConfirmation()
+            }
+        } message: {
+            Text("这会删除本机 paired-self 状态；不会发送消息或读取联系人。")
+        }
     }
 }
 
