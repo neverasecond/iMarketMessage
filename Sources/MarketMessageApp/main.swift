@@ -3,6 +3,35 @@ import MarketMessageCore
 import ServiceManagement
 import UserNotifications
 
+private enum NotificationAuthorizationState: Sendable {
+    case authorized
+    case provisional
+    case ephemeral
+    case denied
+    case notDetermined
+    case unknown
+}
+
+/// Keep the non-Sendable UNNotificationSettings value on the notification
+/// API's side of the async boundary.  The main-actor view model receives only
+/// this small Sendable state.
+private func readNotificationAuthorizationState() async -> NotificationAuthorizationState {
+    await withCheckedContinuation { continuation in
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let state: NotificationAuthorizationState
+            switch settings.authorizationStatus {
+            case .authorized: state = .authorized
+            case .provisional: state = .provisional
+            case .ephemeral: state = .ephemeral
+            case .denied: state = .denied
+            case .notDetermined: state = .notDetermined
+            @unknown default: state = .unknown
+            }
+            continuation.resume(returning: state)
+        }
+    }
+}
+
 @main
 struct MarketMessageApp: App {
     @StateObject private var model: RuleViewModel
@@ -296,11 +325,11 @@ final class RuleViewModel: ObservableObject {
 
     func refreshNotificationStatus() async {
         guard !demoMode else { return }
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        switch settings.authorizationStatus {
+        let state = await readNotificationAuthorizationState()
+        switch state {
         case .authorized, .provisional, .ephemeral:
             notificationAuthorized = true
-            notificationStatus = settings.authorizationStatus == .provisional ? "临时授权" : "已授权"
+            notificationStatus = state == .provisional ? "临时授权" : "已授权"
         case .denied:
             notificationAuthorized = false
             notificationStatus = "已拒绝；请在系统设置中更改"
@@ -308,7 +337,7 @@ final class RuleViewModel: ObservableObject {
         case .notDetermined:
             notificationAuthorized = false
             notificationStatus = "尚未请求"
-        @unknown default:
+        case .unknown:
             notificationAuthorized = false
             notificationStatus = "未知状态"
         }
