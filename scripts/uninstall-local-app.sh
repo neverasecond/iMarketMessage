@@ -9,8 +9,8 @@ usage() {
     cat <<'USAGE'
 Usage: scripts/uninstall-local-app.sh [options]
 
-Remove exactly one local iMM.app and stop its active per-user monitor. User
-data is preserved by default.
+Remove exactly one local iMM.app and stop its active per-user gateway and
+monitor services. User data is preserved by default.
 
 Options:
   --app PATH          installed iMM.app (default: ~/Applications/iMM.app)
@@ -18,8 +18,10 @@ Options:
   --yes               do not ask for confirmation
   -h, --help          show this help
 
-The API key remains in Keychain. Delete it from iMM.app before uninstalling,
-or remove the iMarketMessage item manually in Keychain Access.
+Before running this script, open the old app and unregister both SMAppService
+entries in this order: gateway companion, then background monitor. The API key
+remains in Keychain. Delete it from iMM.app before uninstalling, or remove the
+iMarketMessage item manually in Keychain Access.
 USAGE
 }
 
@@ -74,7 +76,7 @@ if (( assume_yes == 0 )); then
     if (( remove_data == 1 )); then
         echo "It will also remove exactly: $data_dir"
     fi
-    echo "If background monitoring is enabled, first use iMM.app's 停用 button to unregister SMAppService."
+    echo "First use iMM.app's 停用 companion and 停用后台监控 buttons to unregister SMAppService in that order."
     printf 'Continue? [y/N] '
     read -r answer
     case "$answer" in
@@ -92,8 +94,10 @@ stop_agent() {
         launchctl bootout "gui/${uid}/${label}"
     fi
 }
-stop_agent com.imarketmessage.monitor
+# Stop the sender before the monitor. These launchctl calls only clean up a
+# loaded per-user label; they do not replace SMAppService.unregister().
 stop_agent com.imarketmessage.gateway
+stop_agent com.imarketmessage.monitor
 
 rm -rf -- "$app_path"
 if (( remove_data == 1 )) && [[ -d "$data_dir" ]]; then
@@ -108,4 +112,4 @@ else
 fi
 
 echo "Removed app: $app_path"
-echo "Keychain credentials were not modified. If SMAppService still appears in Login Items, reopen the old app if available and choose 停用, then remove its Login Item entry."
+echo "Keychain credentials were not modified. If either SMAppService still appears in Login Items, reopen the old app if available and unregister gateway then monitor, then remove only the matching Login Item entries."

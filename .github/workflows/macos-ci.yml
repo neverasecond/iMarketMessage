@@ -174,10 +174,42 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          command -v iconutil >/dev/null 2>&1
-          test -f Packaging/AppIcon.icns
-          iconutil -c icns Packaging/AppIcon.iconset -o /tmp/imarketmessage-AppIcon-ci.icns
-          cmp -s Packaging/AppIcon.icns /tmp/imarketmessage-AppIcon-ci.icns
+          command -v iconutil >/dev/null 2>&1 || {
+            echo "release_candidate requires the full-Xcode iconutil binary." >&2
+            exit 1
+          }
+          test -d Packaging/AppIcon.iconset || {
+            echo "Packaging/AppIcon.iconset is required for a release candidate." >&2
+            exit 1
+          }
+          test -f Packaging/AppIcon.icns || {
+            echo "Packaging/AppIcon.icns is required for a release candidate." >&2
+            exit 1
+          }
+          expected_icons=(
+            icon_16x16.png icon_16x16@2x.png
+            icon_32x32.png icon_32x32@2x.png
+            icon_128x128.png icon_128x128@2x.png
+            icon_256x256.png icon_256x256@2x.png
+            icon_512x512.png icon_512x512@2x.png
+          )
+          for icon_name in "${expected_icons[@]}"; do
+            test -s "Packaging/AppIcon.iconset/$icon_name" || {
+              echo "Missing or empty iconset member: $icon_name" >&2
+              exit 1
+            }
+          done
+          icon_tmp="$(mktemp "$RUNNER_TEMP/imarketmessage-AppIcon-ci.XXXXXX")"
+          cleanup_icon_tmp() { rm -f -- "$icon_tmp"; }
+          trap cleanup_icon_tmp EXIT
+          if ! iconutil -c icns Packaging/AppIcon.iconset -o "$icon_tmp"; then
+            echo "iconutil could not convert Packaging/AppIcon.iconset; do not ship a guessed or renamed PNG." >&2
+            exit 1
+          fi
+          cmp -s Packaging/AppIcon.icns "$icon_tmp" || {
+            echo "Packaging/AppIcon.icns differs from iconutil output." >&2
+            exit 1
+          }
           test -s Packaging/AppIcon.icns
 
       - name: Report development icon status
@@ -187,7 +219,11 @@ jobs:
           set -euo pipefail
           test -s Packaging/AppIcon-1024.png
           if [[ -f Packaging/AppIcon.icns ]]; then
-            echo "Packaging/AppIcon.icns is present; release candidates must validate it with iconutil."
+            if [[ -d Packaging/AppIcon.iconset ]]; then
+              echo "Packaging/AppIcon.icns and iconset are present; release candidates must validate both with iconutil."
+            else
+              echo "Packaging/AppIcon.icns is present without Packaging/AppIcon.iconset; release candidates remain blocked."
+            fi
           else
             echo "No Packaging/AppIcon.icns: this CI run remains development-only and is not release-ready."
           fi

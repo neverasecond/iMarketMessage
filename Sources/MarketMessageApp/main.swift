@@ -12,6 +12,39 @@ private enum NotificationAuthorizationState: Sendable {
     case unknown
 }
 
+/// Keep the user-facing labels for both Service Management entries in one
+/// place.  The gateway and monitor have different jobs, but the four
+/// Service Management states have the same semantics for each of them.
+enum AppServiceStatusKind: Equatable, Sendable {
+    case enabled
+    case requiresApproval
+    case notRegistered
+    case notFound
+    case unknown
+}
+
+enum AppServiceStatusText {
+    static func kind(for status: SMAppService.Status) -> AppServiceStatusKind {
+        switch status {
+        case .enabled: return .enabled
+        case .requiresApproval: return .requiresApproval
+        case .notRegistered: return .notRegistered
+        case .notFound: return .notFound
+        @unknown default: return .unknown
+        }
+    }
+
+    static func gateway(for kind: AppServiceStatusKind) -> String {
+        switch kind {
+        case .enabled: return "已启用（每 30 秒处理 outbox）"
+        case .requiresApproval: return "等待在“系统设置 → 登录项”中批准"
+        case .notRegistered: return "未注册"
+        case .notFound: return "尚未注册；点击“启用 iMessage companion”"
+        case .unknown: return "未知状态"
+        }
+    }
+}
+
 /// Keep the non-Sendable UNNotificationSettings value on the notification
 /// API's side of the async boundary.  The main-actor view model receives only
 /// this small Sendable state.
@@ -59,6 +92,7 @@ final class RuleViewModel: ObservableObject {
     @Published var apiKeyStatus = "未检查"
     @Published var notificationStatus = "未检查"
     @Published var backgroundStatus = "未检查"
+    @Published var gatewayStatus = "未检查"
     @Published var backgroundLastRun = "尚无后台运行记录"
     @Published var localNotificationsEnabled = false
     @Published var pairingTargetInput = ""
@@ -76,6 +110,7 @@ final class RuleViewModel: ObservableObject {
     private var notificationAuthorized = false
     private static let localNotificationsPreferenceKey = "localNotificationsEnabled"
     private static let monitorPlistName = "com.imarketmessage.monitor.plist"
+    private static let gatewayPlistName = "com.imarketmessage.gateway.plist"
     private static let pairingFileName = "paired-self.json"
 
     init(demoMode: Bool = false) {
@@ -95,6 +130,7 @@ final class RuleViewModel: ObservableObject {
             self.apiKeyStatus = "演示模式：不读取 Keychain"
             self.notificationStatus = "演示模式：不请求通知权限"
             self.backgroundStatus = "演示模式：不注册后台服务"
+            self.gatewayStatus = "演示模式：不注册 gateway companion"
             self.backgroundLastRun = "演示模式：无后台记录"
             self.pairingStatus = "演示模式：不读取配对状态"
             return
@@ -126,6 +162,7 @@ final class RuleViewModel: ObservableObject {
         refreshPairingStatus()
         localNotificationsEnabled = UserDefaults.standard.bool(forKey: Self.localNotificationsPreferenceKey)
         refreshBackgroundStatus()
+        refreshGatewayStatus()
         Task { await refreshNotificationStatus() }
     }
 
@@ -140,7 +177,13 @@ final class RuleViewModel: ObservableObject {
 
     func delete(at offsets: IndexSet) {
         guard !demoMode else { return }
+        let deletedIDs = Set(offsets.compactMap { index in
+            rules.indices.contains(index) ? rules[index].id : nil
+        })
         rules.remove(atOffsets: offsets)
+        if let selectedID, deletedIDs.contains(selectedID) {
+            self.selectedID = rules.first?.id
+        }
         persist()
     }
 
@@ -248,10 +291,29 @@ final class RuleViewModel: ObservableObject {
     /// the pairing UI.  It does not accept a replacement target or a CLI flag.
     func resetPairingAfterExplicitConfirmation() {
         guard !demoMode, let pairingURL else { return }
+        var companionCleanupError: String?
+        if Bundle.main.bundleURL.pathExtension == "app" {
+            let service = SMAppService.agent(plistName: Self.gatewayPlistName)
+            let kind = AppServiceStatusText.kind(for: service.status)
+            if kind == .enabled || kind == .requiresApproval {
+                do {
+                    try service.unregister()
+                } catch {
+                    // Deleting the paired target still makes a registered
+                    // companion fail closed. Surface the cleanup failure so
+                    // the user can retry from the companion controls.
+                    companionCleanupError = "停用失败：" + error.localizedDescription
+                }
+            }
+        }
         do {
             try GatewayPairingStore(fileURL: pairingURL).reset()
             pairingTargetInput = ""
             pairingStatus = "未配对"
+            refreshGatewayStatus()
+            if let companionCleanupError {
+                gatewayStatus = companionCleanupError
+            }
         } catch {
             pairingStatus = "重置失败（配对未改变）"
         }
@@ -274,7 +336,7 @@ final class RuleViewModel: ObservableObject {
         } else if result.error != nil || result.failedCount > 0 || result.rejectedCount > 0 || result.quarantinedCount > 0 {
             pairingSendStatus = "发送失败；请查看 gateway 状态"
         } else if result.sentCount > 0 {
-            pairingSendStatus = "已发送 \(result.sentCount) 条"
+            pairingSendStatus = "已提交给 Messages \(result.sentCount) 条（请确认送达）"
         } else if result.duplicateCount > 0 {
             pairingSendStatus = "无新消息（重复已跳过）"
         } else {
@@ -387,6 +449,67 @@ final class RuleViewModel: ObservableObject {
         refreshBackgroundHealth()
     }
 
+    /// Register the bundled iMessage companion only after the user has
+    /// completed paired-self setup.  Reading the private pairing state again
+    /// here avoids relying on a stale UI value if the file was removed or
+    /// changed outside the app.  A missing/invalid pairing always fails
+    /// closed and never calls Service Management.
+    func registerGatewayCompanion() {
+        guard !demoMode else { return }
+        guard Bundle.main.bundleURL.pathExtension == "app" else {
+            gatewayStatus = "源码运行模式；gateway companion 不可注册"
+            return
+        }
+        guard hasValidPairingForGateway() else {
+            gatewayStatus = "未配对；gateway companion 未注册"
+            return
+        }
+        do {
+            try SMAppService.agent(plistName: Self.gatewayPlistName).register()
+            refreshGatewayStatus()
+        } catch {
+            gatewayStatus = "注册失败：" + error.localizedDescription
+        }
+    }
+
+    /// Stopping a companion is always safe and remains available after a
+    /// pairing reset, so a previously registered service can be disabled even
+    /// when no destination is currently configured.
+    func unregisterGatewayCompanion() {
+        guard !demoMode else { return }
+        guard Bundle.main.bundleURL.pathExtension == "app" else {
+            gatewayStatus = "当前不是打包后的 iMM.app"
+            return
+        }
+        do {
+            try SMAppService.agent(plistName: Self.gatewayPlistName).unregister()
+            refreshGatewayStatus()
+        } catch {
+            gatewayStatus = "停用失败：" + error.localizedDescription
+        }
+    }
+
+    func refreshGatewayStatus() {
+        guard !demoMode else { return }
+        guard Bundle.main.bundleURL.pathExtension == "app" else {
+            gatewayStatus = "源码运行模式；gateway 状态不可查询"
+            return
+        }
+        gatewayStatus = AppServiceStatusText.gateway(
+            for: AppServiceStatusText.kind(for: SMAppService.agent(plistName: Self.gatewayPlistName).status)
+        )
+    }
+
+    private func hasValidPairingForGateway() -> Bool {
+        guard let pairingURL else { return false }
+        do {
+            return try GatewayPairingStore(fileURL: pairingURL).load() != nil
+        } catch {
+            pairingStatus = "配对状态不可用"
+            return false
+        }
+    }
+
     private func refreshBackgroundHealth() {
         guard let stateURL else { return }
         let healthURL = stateURL.deletingLastPathComponent().appendingPathComponent("background-health.json")
@@ -475,6 +598,7 @@ struct RuleEditorView: View {
     @ObservedObject var model: RuleViewModel
     var onSave: () -> Void
     @State private var pairingResetConfirmation = false
+    @State private var ruleDeleteConfirmation = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -573,6 +697,20 @@ struct RuleEditorView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Section("iMessage gateway companion") {
+                    Text("后台 companion：" + model.gatewayStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("启用 iMessage companion") { model.registerGatewayCompanion() }
+                        Button("停用 companion") { model.unregisterGatewayCompanion() }
+                        Button("刷新状态") { model.refreshGatewayStatus() }
+                    }
+                    Text("只有已完成 paired-self 配对后才能注册；未配对时会拒绝注册。启用后由 macOS Service Management 按约 30 秒检查一次 outbox；Messages 仍需用户单独批准。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("行情条件") {
                     ForEach($rule.conditions) { $condition in
                         ConditionEditor(condition: $condition)
@@ -586,6 +724,16 @@ struct RuleEditorView: View {
                 Section {
                     Button("保存") { onSave() }
                         .keyboardShortcut(.defaultAction)
+                }
+
+                Section("危险操作") {
+                    Button("删除当前规则", role: .destructive) {
+                        ruleDeleteConfirmation = true
+                    }
+                    .disabled(model.demoMode)
+                    Text("删除后会立即保存规则列表；如需保留，请先取消。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
@@ -601,6 +749,19 @@ struct RuleEditorView: View {
         } message: {
             Text("这会删除本机 paired-self 状态；不会发送消息或读取联系人。")
         }
+        .alert("确认删除当前规则？", isPresented: $ruleDeleteConfirmation) {
+            Button("取消", role: .cancel) {}
+            Button("删除规则", role: .destructive) {
+                deleteCurrentRule()
+            }
+        } message: {
+            Text("“\(rule.name)”将从本机规则列表中删除并立即保存。")
+        }
+    }
+
+    private func deleteCurrentRule() {
+        guard let index = model.rules.firstIndex(where: { $0.id == rule.id }) else { return }
+        model.delete(at: IndexSet(integer: index))
     }
 }
 

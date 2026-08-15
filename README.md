@@ -6,7 +6,7 @@ iMarketMessage（面向用户的 macOS 应用名：iMM）是一个面向 macOS 1
 
 Swift Package 同时保留 `MarketMessage` 兼容识别名；面向用户的可执行目标优先使用 `iMM`，这不代表另一个服务或账号。最终可分发 `.app` 的包装、签名和公证按发布者的实际方案确认，见 [开发者指南](DEVELOPMENT.md)、[限制说明](LIMITATIONS.md) 和 [发布清单](RELEASE_CHECKLIST.md)。
 
-主 App 不读取 Messages 数据库，不保存电话号码或 chat ID，不自动安装或启用 LaunchAgent，不自动发送真实消息，也不会调用 Codex/OpenAI。打包内的 gateway companion 只有在用户明确执行 `--send`、已有 paired-self 且通过 Apple Events 授权后才会消费 outbox；gateway、消息路由和联系人权限仍由用户单独审查并授权。
+主 App 不读取 Messages 数据库、Contacts、电话号码或 chat ID，不自动安装或启用 LaunchAgent，也不会调用 GitHub/`gh`、Codex/OpenAI。默认不会自动发送消息；用户完成 paired-self 首次配对并明确点击“发送一次”后，App 可以通过 `/usr/bin/osascript` 把 outbox 提交给 Messages。打包内的 gateway companion 也只有在用户明确启用并批准 `SMAppService`、已有 paired-self 后才会自动消费 outbox。gateway、消息路由和 Apple Events 权限仍由用户单独审查并授权。
 
 以下截图是 iMM 的只读演示界面，不读取真实行情、不写入 outbox：
 
@@ -45,9 +45,9 @@ open dist/iMM.app
 (cd dist && shasum -a 256 -c iMM-v0.2.0-beta-local.zip.sha256)
 ```
 
-输出是从源码构建的 ad-hoc 签名本机测试包，不是 Developer ID 签名、Apple 公证或可绕过 Gatekeeper 的公开二进制。`Packaging/AppIcon-1024.png` 只作为当前开发包资源；正式发布前仍必须由完整 Xcode 生成并验证 `.icns`，当前 beta 不声称已完成该步骤。
+输出是从源码构建的 ad-hoc 签名本机测试包，不是 Developer ID 签名、Apple 公证或可绕过 Gatekeeper 的公开二进制。构建脚本优先嵌入经过 `iconutil` 验证的 `Packaging/AppIcon.icns`；若该正式资源不存在，则明确回退到 `Packaging/AppIcon-1024.png` 开发资源，不能把 PNG 回退写成已完成的发布图标。
 
-默认安装到 `~/Applications/iMM.app`，会先校验 bundle/plist/签名、停止当前用户中明确的 `com.imarketmessage.monitor`/`com.imarketmessage.gateway`（若已加载），再以 staging + 替换方式安装；不会自动注册后台服务：
+默认安装到 `~/Applications/iMM.app`，会先校验 bundle/plist/签名、按 gateway→monitor 顺序停止当前用户中明确的 `com.imarketmessage.gateway`/`com.imarketmessage.monitor`（若已加载），再以 staging + 替换方式安装；不会自动注册后台服务：
 
 ```sh
 scripts/install-local-app.sh --app dist/iMM.app
@@ -61,7 +61,7 @@ scripts/install-local-app.sh --app dist/iMM.app --destination /Applications
 scripts/uninstall-local-app.sh --app "$HOME/Applications/iMM.app"
 ```
 
-首次启用本地通知时由用户主动点击“请求权限”；后台监控由 App 内按钮通过 macOS `SMAppService` 注册或停用，系统可能要求在“系统设置 → 通用 → 登录项”中批准。当前仓库和 CI 尚未替代真实 Mac 验证，见 [发布清单](RELEASE_CHECKLIST.md)。
+首次启用本地通知时由用户主动点击“请求权限”；后台监控和 iMessage gateway companion 分别由 App 内按钮通过 macOS `SMAppService` 注册或停用，系统可能要求在“系统设置 → 通用 → 登录项”中批准。两个服务的状态、停用顺序和升级/卸载回滚见 [升级与卸载说明](docs/V0.2_UPGRADE.md)。当前仓库和 CI 尚未替代真实 Mac 验证，见 [发布清单](RELEASE_CHECKLIST.md)。
 
 UI 可以浏览、添加、编辑、删除、启用/禁用规则，并选择 provider、指标、比较符、阈值、冷却交易日和“仅首次进入区域”。规则保存到 `~/Library/Application Support/MarketMessage/rules.json`，写入采用原子替换和 `0600` 权限。
 
@@ -83,7 +83,7 @@ UI 可以浏览、添加、编辑、删除、启用/禁用规则，并选择 pro
 {"id":"...","source":"market-message","text":"..."}
 ```
 
-只允许 `source`、`id`、`text` 三个字段，消息正文默认限制 4,000 UTF-8 字节。真实发送由仓库内的 paired-self gateway companion 提供，但必须显式传 `--send`；它只从本机 pairing 文件重新读取唯一目标，不接受 recipient 参数，不读取 Messages 数据库或联系人。队列消费者协议和 paired-self 限制见 [docs/GATEWAY_PROTOCOL.md](docs/GATEWAY_PROTOCOL.md)。
+只允许 `source`、`id`、`text` 三个字段，消息正文默认限制 4,000 UTF-8 字节。真实发送由 App 的“发送一次”和仓库内的 paired-self gateway companion 提供；两者都只从本机 pairing 文件重新读取唯一目标，不接受 recipient 参数，不读取 Messages 数据库或 Contacts。队列消费者协议和 paired-self 限制见 [docs/GATEWAY_PROTOCOL.md](docs/GATEWAY_PROTOCOL.md)。
 
 当前仓库提供 `--dry-run` 只读预览和显式 `--send` 发送路径。准备好权限为 `0700` 的已有 outbox 目录和首次配对生成的 `paired-self.json` 后，可先运行：
 
@@ -95,9 +95,9 @@ swift run --scratch-path /tmp/imarketmessage-gateway iMM-gateway \
   --ack /tmp/imarketmessage-gateway-acks.json
 ```
 
-`--dry-run` 只读取并校验现有文件，绝不发送、创建目录、改权限、写 ACK、移动或删除 outbox 文件；不带 `--dry-run` 或 `--send` 会直接拒绝运行。发送仍不会由主 App、构建脚本或安装脚本自动触发。
+`--dry-run` 只读取并校验现有文件，绝不发送、创建目录、改权限、写 ACK、移动或删除 outbox 文件；不带 `--dry-run` 或 `--send` 会直接拒绝运行。发送不会由构建脚本或安装脚本自动触发；App UI 的“发送一次”和 CLI `--send` 都要求用户明确操作。
 
-发送必须由用户另行确认，并会调用 `/usr/bin/osascript` 访问 Messages：
+发送必须由用户另行确认，并会调用 `/usr/bin/osascript` 访问 Messages。正确的 paired-self 目标在实机上可以送达；但 `osascript` 进程返回 0 只表示 Messages 接受了 AppleScript 请求，不是运营商或设备的送达回执。错误或失效的目标可能让进程仍返回 0，而 Messages 随后无法送达；发送后必须检查 Messages/目标设备：
 
 ```sh
 swift run --scratch-path /tmp/imarketmessage-gateway iMM-gateway \
@@ -107,11 +107,11 @@ swift run --scratch-path /tmp/imarketmessage-gateway iMM-gateway \
   --ack /tmp/imarketmessage-gateway-acks.json
 ```
 
-`--send` 是唯一允许消费/发送的开关；它不接受 `--recipient`、电话号码、chat ID 或其他目标参数。打包 companion 的 LaunchAgent plist 只传 `--send`，CLI 在未传路径时使用当前用户 Application Support 的默认 `Outbox/`、paired-self 和 ACK 路径；安装脚本不会自动注册该服务。首次发送可能触发 Apple Events/自动化权限提示，拒绝时必须在系统设置中明确处理。
+`--send` 是 CLI 唯一允许消费/发送的开关；它不接受 `--recipient`、电话号码、chat ID 或其他目标参数。打包 companion 的 LaunchAgent plist 只传 `--send`，CLI 在未传路径时使用当前用户 Application Support 的默认 `Outbox/`、paired-self 和 ACK 路径。App UI 的“启用 iMessage companion”同样只在配对存在时通过 `SMAppService` 注册；安装脚本不会自动注册该服务。首次发送可能触发 Apple Events/自动化权限提示，拒绝时必须在系统设置中明确处理。
 
 ## 后台运行
 
-打包 App 内含 `com.imarketmessage.monitor.plist`（本地行情检查）和 `com.imarketmessage.gateway.plist`（显式 `--send` 的 paired-self companion）。它们只在用户明确注册并批准后使用；构建、安装脚本和 CI 都不会自动注册服务。`Config/com.marketmessage.monitor.plist.example` 是独立的旧式模板，含占位路径，不能与内嵌服务混用。停用/卸载前先在 App 内点击“停用后台监控”，再按 [升级与卸载说明](docs/V0.2_UPGRADE.md) 检查 `launchctl` 状态。
+打包 App 内含 `com.imarketmessage.monitor.plist`（本地行情检查）和 `com.imarketmessage.gateway.plist`（显式 `--send` 的 paired-self companion）。它们是两个独立的 `SMAppService` 项：先在 App 内停用 gateway companion，再停用 monitor；确认两个状态都为“未注册”后再升级或卸载。恢复时先打开新 App、确认 pairing 和数据仍在，再按需要启用 monitor，最后启用 gateway companion 并在系统设置中批准。构建、安装脚本和 CI 都不会自动注册服务；脚本只对当前用户精确 label 做残留 `launchctl bootout`。`Config/com.marketmessage.monitor.plist.example` 是独立的旧式模板，含占位路径，不能与内嵌服务混用。完整步骤见 [升级与卸载说明](docs/V0.2_UPGRADE.md)。
 
 ## 隐私与安全
 

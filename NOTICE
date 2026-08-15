@@ -3,8 +3,11 @@ iMarketMessage (iMM)
 Copyright (c) 2026 iMarketMessage contributors.
 
 This repository has no vendored third-party source dependencies. It uses Apple
-platform frameworks (Foundation, Security, SwiftUI) supplied by the operating
-system and Swift Package Manager. Cboe and Alpha Vantage are external data
-services; their names and data are subject to their own marks, terms, licenses,
-attribution requirements, and rate limits. This project does not claim or grant
-rights to their data.
+platform frameworks and tools (Foundation, Security, SwiftUI,
+UserNotifications, ServiceManagement, and `/usr/bin/osascript` talking to
+Messages) supplied by the operating system and Swift Package Manager. The
+paired-self sender does not bundle `imsg`, a Contacts/Messages database reader,
+GitHub/`gh`, Codex/OpenAI, or any existing personal gateway. Cboe and Alpha
+Vantage are external data services; their names and data are subject to their
+own marks, terms, licenses, attribution requirements, and rate limits. This
+project does not claim or grant rights to their data.

@@ -1,11 +1,15 @@
 # iMM gateway outbox protocol (v1 beta foundation)
 
-`iMarketMessage` writes a deliberately narrow hand-off for a separately
-authorized local companion. This release is only a beta foundation: it has no
-real sender, no pairing UI or pairing command, and no installation action. The
-repository contains no Messages database reader, contact lookup, AppleScript
-sender, `imsg` binary, or LaunchAgent installer. It can therefore be reviewed
-and tested without sending any real message.
+`iMarketMessage` writes a deliberately narrow hand-off for a local companion
+that the user explicitly authorizes. The beta includes a real paired-self
+sender: the iMM UI can save the first pairing and submit one queued message,
+and `iMM-gateway --send` can process the same outbox. The UI also exposes
+separate Service Management controls for the monitor and gateway companion.
+Neither path accepts an arbitrary recipient, reads the Messages database or
+Contacts, calls GitHub/`gh`/Codex, or uses an existing personal gateway. The
+sender uses `/usr/bin/osascript` to ask Messages to send to the one stored
+paired-self target; Apple Events permission and actual delivery remain user
+responsibilities.
 
 ## Envelope
 
@@ -31,18 +35,25 @@ scans top-level `*.json` files; temporary and hidden files are ignored.
 
 ## Paired-self boundary
 
-`GatewayPairingStore.firstSetup(target:)` is the only write path for the
-paired-self target. It creates a `0600` file in a `0700` directory and refuses
-to overwrite an existing pairing. The target is opaque local setup state; it is
-not part of an envelope, is never discovered from Contacts or Messages, and
-must not be printed or logged. A sender receives only this stored target, so a
-queue file or caller cannot select an arbitrary recipient.
+`GatewayPairingStore.firstSetup(target:)` is the only first-setup write path
+for the paired-self target. The iMM UI exposes it as “首次配对”, refuses to
+silently replace an existing target, and requires an explicit confirmation for
+reset. It creates a `0600` file in a `0700` directory. The target is opaque
+local setup state; it is not part of an envelope, is never discovered from
+Contacts or Messages, and must not be printed or logged. A sender receives
+only this stored target, so a queue file, CLI caller, or gateway service cannot
+select an arbitrary recipient.
 
 Before pairing, the consumer leaves outbox files untouched and reports
-`waitingForPairing`. A real transport adapter is not shipped in this beta. If
-one is separately reviewed and authorized on a real Mac, it must continue to
-send only to this paired-self value. `DryRunGatewaySender` is a guard that
-throws `unavailableInBeta`; it is never treated as a successful send.
+`waitingForPairing`. The shipped `PairedSelfIMessageSender` re-reads the
+private pairing file before each send and passes the target and text as
+separate arguments to a fixed AppleScript. `DryRunGatewaySender` remains a
+no-I/O guard for tests and explicitly throws; it is never treated as a
+successful send. A wrong-but-valid target is a real risk: `osascript` can exit
+zero after Messages accepts the script even when Messages cannot deliver to
+that target. A `sent`/submitted result therefore means “process accepted the
+request”, not a delivery receipt; verify the paired target and Messages
+conversation on the real device.
 
 ## ACK, idempotency, retry, and quarantine
 
@@ -66,19 +77,23 @@ permission-insecure files are isolated immediately. A deterministic ID makes
 restarts and duplicate files idempotent at the companion boundary; a real
 transport should also make its send operation idempotent where possible.
 
-## Background dry-run plan
+## Background registration and read-only plans
 
 `GatewayInstallManager.dryRunPlan(...)` returns a reviewable launchd plist
 string. `iMM-gateway --plan ...` prints the same plan. Neither operation writes
 a file, calls `launchctl`, installs a LaunchAgent, or starts a service. The
 checked-in `Config/com.imarketmessage.gateway.plist.example` is a template
-only and intentionally uses `--dry-run`.
+only and intentionally uses `--dry-run`. The bundled App has the separate
+user-facing action: after pairing, “启用 iMessage companion” registers
+`com.imarketmessage.gateway.plist` through `SMAppService`; “停用 companion”
+unregisters it. The monitor is a different `SMAppService` entry and can be
+managed independently.
 
 `iMM-gateway --dry-run ...` uses `GatewayOutboxPreview`, a read-only inspection
 of already-existing files. It may report ready, duplicate, or rejected
 envelopes, but it never creates an outbox/ACK/pairing/quarantine directory,
 changes permissions, writes ACKs, moves or deletes files, or invokes a sender.
-Its output is a preview, not a send result. There is currently no pairing UI or
-pairing command and no install action; a user must independently review,
-authorize, and implement any future real transport and background installation
-on the target Mac.
+Its output is a preview, not a send result. Use it before an explicit UI
+“发送一次” or `iMM-gateway --send` when reviewing a new outbox; `--send` is
+the only CLI mode that consumes files. The old personal Codex gateway, if any,
+is outside this product and is neither installed nor called by these paths.

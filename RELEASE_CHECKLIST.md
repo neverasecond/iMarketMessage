@@ -31,20 +31,38 @@
 ## CI 包装与供应链边界
 
 - [ ] `agent/v020-beta` 的完整 Xcode workflow 通过；workflow 只读仓库内容，不持有签名、公证或发布 secrets。
-- [ ] CI 已验证 bundle 结构、Info.plist（含 `NSAppleEventsUsageDescription`）、monitor/gateway 两个内嵌 LaunchAgent plist、`market-message-cli`/`iMM-gateway` helper、`AppIcon-1024.png`、嵌套 ad-hoc 签名、ZIP 内容和 `.zip.sha256`；artifact 下载后重新运行 `shasum -a 256 -c`。
+- [ ] CI 已验证 bundle 结构、Info.plist（含 `NSAppleEventsUsageDescription`）、monitor/gateway 两个内嵌 LaunchAgent plist、`market-message-cli`/`iMM-gateway` helper、开发 PNG 或经 `iconutil` 验证的 `.icns`、嵌套 ad-hoc 签名、ZIP 内容和 `.zip.sha256`；artifact 下载后重新运行 `shasum -a 256 -c`。
 - [ ] `actions/upload-artifact` 已固定到审查过的 commit SHA（当前 workflow 标注 v4.6.2）；它只保留短期 CI artifact，未把 artifact 当成公开 Release 或 Developer ID/公证证明。
-- [ ] 若手动运行 workflow 的 `release_candidate=true`，`Packaging/AppIcon.iconset` 和 `Packaging/AppIcon.icns` 已用完整 Xcode `iconutil` 生成、比较并验证；当前缺少 `.icns` 时必须停止 release gate，不能伪造或改名 PNG。
+- [ ] 若手动运行 workflow 的 `release_candidate=true`，`Packaging/AppIcon.iconset` 和 `Packaging/AppIcon.icns` 已用完整 Xcode `iconutil` 生成、比较并验证；当前缺少 `.icns` 或 `iconutil` 失败时必须停止 release gate，不能伪造或改名 PNG。
 
 ## 应用包装与用户体验（仅在发布二进制附件时适用）
 
 - [ ] 实际 `.app` bundle 已由完整 Xcode 构建，Info.plist、bundle identifier、版本、架构、开发 PNG/正式 `.icns` 图标和嵌套代码经过检查；未把裸 SwiftPM 可执行文件直接冒充正式 app。
 - [ ] `iMM-v0.2.0-beta-local.zip` 与 `.zip.sha256` 只包含必要的 app/资源；校验和与附件一一对应且不含个人路径。
 - [ ] 首次启动、规则增删改、Keychain key 保存/删除、outbox 权限和错误状态在干净 Mac 上验证。
-- [ ] 使用独立 paired-self 测试数据验证 `iMM-gateway --dry-run` 不写入，`iMM-gateway --send` 才消费；Apple Events 允许/拒绝、无 pairing、失败/重试和无 recipient 参数均有记录。
+- [ ] 使用独立 paired-self 测试数据验证 `iMM-gateway --dry-run` 不写入，App UI 的“发送一次”和 `iMM-gateway --send` 才消费；Apple Events 允许/拒绝、无 pairing、失败/重试和无 recipient 参数均有记录。记录必须区分“`osascript` process accepted”与真实 delivery receipt，并覆盖错误 target 可能 exit 0 但 Messages 失败的风险。
 - [ ] 通知允许/拒绝、后台登录项批准、Apple Events 允许/拒绝、重启、睡眠/唤醒、停用、升级和卸载在真实 macOS 14+ 干净账户上逐项记录；未验证项明确标注。
 - [ ] `scripts/install-local-app.sh` 和 `scripts/uninstall-local-app.sh` 的精确目标、确认提示、`launchctl bootout` 和默认数据保留行为已实际演练；没有广泛删除用户目录。
-- [ ] LaunchAgent 不会随安装自动启用；用户在 App 内通过 `SMAppService` 注册/停用，安装/卸载说明见 [`docs/V0.2_UPGRADE.md`](docs/V0.2_UPGRADE.md)。
+- [ ] 两个 LaunchAgent 不会随安装自动启用；用户在 App 内分别通过 `SMAppService` 注册/停用，停用顺序为 gateway companion→monitor，恢复顺序为 monitor→gateway companion；安装/卸载说明见 [`docs/V0.2_UPGRADE.md`](docs/V0.2_UPGRADE.md)。
 - [ ] 如果发布页需要真实发布物截图，截图由用户在脱敏环境中提供；仓库中的 [`docs/assets/imm-demo-hero.png`](docs/assets/imm-demo-hero.png) 仅是 `--demo-screenshot` 生成的只读演示图，不代表已签名、公证的 `.app`，也不能替代发布物验收。
+
+### beta 实机矩阵（当前记录）
+
+下表把已获得的实机事实和必须补做的生命周期验证分开；没有日期、macOS 版本和可复核记录的项目不能勾选发布项。
+
+| 场景 | 状态 | 记录要求 |
+|---|---|---|
+| 正确 paired-self 目标，App UI“发送一次” | 已验证 | 实机目标设备收到消息；保留脱敏结果和时间。 |
+| 错误/失效 target | 已验证风险 | `osascript` 可 exit 0 而 Messages 未送达；发布说明不得把 process accepted 写成 delivery receipt。 |
+| iMM→Messages Automation 权限 | 已验证 | 记录允许状态；拒绝路径仍需单独复核。 |
+| monitor `SMAppService` 注册 | 已验证 | 记录 UI 状态和对应 `com.imarketmessage.monitor` label。 |
+| gateway `SMAppService` 注册/批准/停用 | 待验证 | 需在 UI 完整记录配对前拒绝注册、批准、停用和状态刷新。 |
+| 重启后 monitor + gateway | 待重启 | 两个服务均需记录是否按预期恢复，且不重复发送。 |
+| 睡眠/唤醒后 monitor + gateway | 待睡眠/唤醒 | 记录首次检查、outbox 幂等和 Messages 权限状态。 |
+| 升级/回滚 | 待验证 | 按 gateway→monitor 停用，替换失败恢复旧 App，数据/outbox/pairing/ACK 保留。 |
+| 卸载（默认保留数据） | 待卸载 | UI 停用 gateway→monitor，脚本 bootout 两个精确 label，确认 app 删除且数据保留。 |
+| 卸载 `--remove-data` 与 Keychain | 待验证 | 仅删除精确 Application Support；Keychain 必须另行确认，不能由脚本隐式删除。 |
+| Finder `.icns` 显示和 Gatekeeper | 待验证 | 仅在 `.icns` 经 `iconutil`、签名/公证路径完成后记录。 |
 
 ## Developer ID 签名与公证（仅在发布二进制附件时适用，用户本人操作）
 

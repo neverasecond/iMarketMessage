@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// The small result returned by the process boundary used by the real
 /// transport.  Standard output and error are captured only for the caller;
@@ -23,11 +24,15 @@ public struct GatewayProcessOutput: Equatable, Sendable {
 public enum GatewayProcessError: Error, Equatable, LocalizedError, Sendable {
     case invalidExecutable
     case launchFailed
+    case timedOut
+    case processFailed
 
     public var errorDescription: String? {
         switch self {
         case .invalidExecutable: return "gateway transport 可执行文件无效"
         case .launchFailed: return "gateway transport 无法启动"
+        case .timedOut: return "gateway transport 执行超时"
+        case .processFailed: return "gateway transport 进程失败"
         }
     }
 }
@@ -41,7 +46,24 @@ public protocol GatewayProcessRunner: Sendable {
 /// The production process runner.  It deliberately uses Process arguments
 /// directly and never invokes a shell or concatenates an argument string.
 public struct SystemGatewayProcessRunner: GatewayProcessRunner, Sendable {
-    public init() {}
+    public static let defaultTimeout: TimeInterval = 30
+    public static let defaultTerminationGracePeriod: TimeInterval = 1
+
+    public let timeout: TimeInterval
+    public let terminationGracePeriod: TimeInterval
+
+    public init(
+        timeout: TimeInterval = SystemGatewayProcessRunner.defaultTimeout,
+        terminationGracePeriod: TimeInterval = SystemGatewayProcessRunner.defaultTerminationGracePeriod
+    ) {
+        // Keep invalid caller input bounded as well.  A zero timeout is useful
+        // for tests and intentionally means "do not wait"; NaN/infinite input
+        // falls back to the documented finite defaults.
+        self.timeout = timeout.isFinite ? max(0, timeout) : Self.defaultTimeout
+        self.terminationGracePeriod = terminationGracePeriod.isFinite
+            ? max(0, terminationGracePeriod)
+            : Self.defaultTerminationGracePeriod
+    }
 
     public func run(executableURL: URL, arguments: [String]) throws -> GatewayProcessOutput {
         guard executableURL.path == PairedSelfIMessageSender.osascriptPath else {
@@ -55,17 +77,128 @@ public struct SystemGatewayProcessRunner: GatewayProcessRunner, Sendable {
         let errorPipe = Pipe()
         process.standardOutput = outputPipe
         process.standardError = errorPipe
+
+        // Drain both descriptors on independent queues while the child runs.
+        // Waiting for the process before reading either pipe can deadlock when
+        // osascript emits more than the kernel pipe buffer (notably on errors).
+        let outputDrain = GatewayPipeDrain(fileHandle: outputPipe.fileHandleForReading)
+        let errorDrain = GatewayPipeDrain(fileHandle: errorPipe.fileHandleForReading)
+        let drainGroup = DispatchGroup()
+        drainGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            outputDrain.drain()
+            drainGroup.leave()
+        }
+        drainGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            errorDrain.drain()
+            drainGroup.leave()
+        }
+
+        let termination = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            termination.signal()
+        }
         do {
             try process.run()
         } catch {
+            outputDrain.close()
+            errorDrain.close()
+            outputPipe.fileHandleForWriting.closeFile()
+            errorPipe.fileHandleForWriting.closeFile()
+            _ = drainGroup.wait(timeout: .now() + terminationGracePeriod)
             throw GatewayProcessError.launchFailed
         }
-        process.waitUntilExit()
+
+        // The child inherited the write ends during run().  Closing the
+        // parent's copies guarantees EOF reaches the drainers when the child
+        // exits, even if Foundation retains the Pipe object longer.
+        outputPipe.fileHandleForWriting.closeFile()
+        errorPipe.fileHandleForWriting.closeFile()
+
+        if termination.wait(timeout: .now() + timeout) == .timedOut {
+            terminate(process, termination: termination)
+            // A timed-out command is never reported as a successful send.  Do
+            // not expose captured stderr: AppleScript diagnostics can contain
+            // the paired target or message text.
+            outputDrain.close()
+            errorDrain.close()
+            _ = drainGroup.wait(timeout: .now() + terminationGracePeriod)
+            throw GatewayProcessError.timedOut
+        }
+
+        // The termination handler has fired, so Foundation has populated the
+        // status without requiring an unbounded waitUntilExit call here.
+        if drainGroup.wait(timeout: .now() + terminationGracePeriod) == .timedOut {
+            // Normally Process closes the child-side descriptors for us.  If a
+            // helper inherited one, close our pipe ends and return what was
+            // drained instead of waiting forever.
+            outputDrain.close()
+            errorDrain.close()
+            _ = drainGroup.wait(timeout: .now() + terminationGracePeriod)
+        }
         return GatewayProcessOutput(
             terminationStatus: process.terminationStatus,
-            standardOutput: outputPipe.fileHandleForReading.readDataToEndOfFile(),
-            standardError: errorPipe.fileHandleForReading.readDataToEndOfFile()
+            standardOutput: outputDrain.data,
+            standardError: errorDrain.data
         )
+    }
+
+    private func terminate(_ process: Process, termination: DispatchSemaphore) {
+        guard process.isRunning else {
+            _ = termination.wait(timeout: .now() + terminationGracePeriod)
+            return
+        }
+
+        process.terminate()
+        if termination.wait(timeout: .now() + terminationGracePeriod) == .timedOut,
+           process.isRunning {
+            // `terminate()` is SIGTERM and a stuck AppleScript can ignore it.
+            // Escalate only while this Process still owns a live PID, avoiding
+            // an unbounded wait and avoiding any shell-based kill command.
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+            _ = termination.wait(timeout: .now() + terminationGracePeriod)
+        }
+    }
+}
+
+/// Thread-safe bounded capture for one Process pipe.  The cap keeps a faulty
+/// helper from turning an error path into unbounded memory growth while the
+/// reader still continuously drains the kernel pipe.
+private final class GatewayPipeDrain: @unchecked Sendable {
+    private static let maxCapturedBytes = 1_048_576
+
+    private let fileHandle: FileHandle
+    private let lock = NSLock()
+    private var captured = Data()
+
+    init(fileHandle: FileHandle) {
+        self.fileHandle = fileHandle
+    }
+
+    func drain() {
+        while true {
+            // The throwing API turns a concurrent close (used on timeout) into
+            // a clean end-of-stream instead of raising a FileHandle exception.
+            guard let chunk = try? fileHandle.read(upToCount: 64 * 1024),
+                  !chunk.isEmpty else { return }
+            lock.lock()
+            if captured.count < Self.maxCapturedBytes {
+                let remaining = Self.maxCapturedBytes - captured.count
+                captured.append(chunk.prefix(remaining))
+            }
+            lock.unlock()
+        }
+    }
+
+    var data: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return captured
+    }
+
+    func close() {
+        try? fileHandle.close()
     }
 }
 
@@ -77,11 +210,13 @@ public protocol GatewayMessageTransport: Sendable {
 
 public enum GatewayTransportError: Error, Equatable, LocalizedError, Sendable {
     case invalidMessage
+    case timedOut
     case processFailed
 
     public var errorDescription: String? {
         switch self {
         case .invalidMessage: return "gateway 消息文本无效"
+        case .timedOut: return "iMessage transport 执行超时"
         case .processFailed: return "iMessage transport 执行失败"
         }
     }
@@ -111,6 +246,11 @@ public struct AppleScriptIMessageTransport: GatewayMessageTransport, Sendable {
                 // with `-` (for example `--help` or `-e`).
                 arguments: ["-e", Self.sendScript, "--", target.rawValue, text]
             )
+        } catch let error as GatewayProcessError {
+            if error == .timedOut {
+                throw GatewayTransportError.timedOut
+            }
+            throw GatewayTransportError.processFailed
         } catch {
             throw GatewayTransportError.processFailed
         }

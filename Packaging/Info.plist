@@ -27,7 +27,7 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>仅在你明确启用 paired-self gateway 后，iMM 才会通过 Apple Events 向 Messages 发送已配对的提醒；不会读取消息数据库或联系人。</string>
+    <string>仅在你明确完成 paired-self 配对并点击发送或启用 gateway companion 后，iMM 才会通过 Apple Events 向 Messages 提交已配对的提醒；不会读取消息数据库或联系人。</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

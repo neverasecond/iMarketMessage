@@ -147,6 +147,29 @@ struct GatewayTests {
         #expect(runner.callCount() == 1)
     }
 
+    @Test func pairedSelfSenderMapsProcessTimeoutWithoutLaunchingARealTransport() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pairingURL = directory.appendingPathComponent("paired-self.json")
+        try GatewayPairingStore(fileURL: pairingURL).firstSetup(target: try PairedSelfTarget(rawValue: "local-self"))
+        let sender = PairedSelfIMessageSender(
+            pairingURL: pairingURL,
+            transport: AppleScriptIMessageTransport(
+                processRunner: ThrowingGatewayProcessRunner(error: .timedOut)
+            )
+        )
+
+        do {
+            try await sender.send(
+                GatewayOutboxEnvelope(id: "safe", text: "hello"),
+                to: try PairedSelfTarget(rawValue: "ignored-forged-target")
+            )
+            Issue.record("timed out transport unexpectedly succeeded")
+        } catch let error as GatewayTransportError {
+            #expect(error == .timedOut)
+        }
+    }
+
     @Test func outboxConsumerSendsToPairedSelfAndDeduplicatesACK() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -380,5 +403,13 @@ private final class RecordingGatewayProcessRunner: GatewayProcessRunner, @unchec
     func callCount() -> Int {
         lock.lock(); defer { lock.unlock() }
         return calls.count
+    }
+}
+
+private struct ThrowingGatewayProcessRunner: GatewayProcessRunner, Sendable {
+    let error: GatewayProcessError
+
+    func run(executableURL: URL, arguments: [String]) throws -> GatewayProcessOutput {
+        throw error
     }
 }

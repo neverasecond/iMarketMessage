@@ -12,7 +12,9 @@ usage() {
 Usage: scripts/install-local-app.sh [--app PATH] [--destination DIR] [--yes]
 
 Install the locally built iMM.app. The default target is
-~/Applications/iMM.app. Existing Application Support data is preserved.
+~/Applications/iMM.app. Existing Application Support data is preserved. Before
+an upgrade, unregister both bundled SMAppService entries in the old app UI in
+this order: gateway companion, then background monitor.
 USAGE
 }
 
@@ -109,8 +111,11 @@ stop_agent() {
         launchctl bootout "gui/${uid}/${label}"
     fi
 }
-stop_agent com.imarketmessage.monitor
+# Stop the sender first so no new message is consumed while the monitor is
+# still able to produce outbox files. This is only a launchctl fallback;
+# SMAppService.unregister() must still be done in the old app UI.
 stop_agent com.imarketmessage.gateway
+stop_agent com.imarketmessage.monitor
 
 staging_dir="$(mktemp -d "$destination_dir/.imarketmessage-install.XXXXXX")"
 backup_app="$staging_dir/previous-iMM.app"
@@ -135,5 +140,6 @@ fi
 rm -rf -- "$backup_app"
 
 echo "Installed local app: $target_app"
-echo "No LaunchAgent was registered by this script. Enable background monitoring from iMM.app if desired."
+echo "No LaunchAgent was registered by this script. SMAppService registrations were not changed by this script."
+echo "If desired, open iMM.app and restore services in this order: monitor, then gateway companion; approve each Login Item."
 echo "User data remains at: ${HOME}/Library/Application Support/MarketMessage"

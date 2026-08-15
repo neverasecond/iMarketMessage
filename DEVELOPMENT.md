@@ -41,7 +41,7 @@ rm -rf -- /tmp/imarketmessage-build /tmp/imarketmessage-test
 swift run --scratch-path /tmp/imarketmessage-app iMM
 ```
 
-应用默认把规则保存到 `~/Library/Application Support/MarketMessage/rules.json`，运行状态保存到同目录的 `runtime-state.json`，outbox 位于 `Outbox/`。规则文件使用原子替换和 `0600` 权限，outbox 目录为 `0700`、消息文件为 `0600`。应用不会读取 Messages 数据库、联系人或 chat ID。
+应用默认把规则保存到 `~/Library/Application Support/MarketMessage/rules.json`，运行状态保存到同目录的 `runtime-state.json`，outbox 位于 `Outbox/`。规则文件使用原子替换和 `0600` 权限，outbox 目录为 `0700`、消息文件为 `0600`。应用不会读取 Messages 数据库、Contacts 或 chat ID，也不调用 GitHub/`gh`、Codex/OpenAI。
 
 应用界面可以添加、编辑、启用/禁用规则，选择 Cboe VIX 或 Alpha Vantage provider，设置 `close`/`dailyPercentChange`、比较符、阈值、冷却交易日和“仅首次进入区域”。Alpha Vantage key 只通过 macOS Keychain 保存，不会写入规则 JSON。
 
@@ -54,7 +54,7 @@ scripts/build-local-app.sh
 (cd dist && shasum -a 256 -c iMM-v0.2.0-beta-local.zip.sha256)
 ```
 
-脚本会构建 `iMM.app`、内嵌 `market-message-cli` 和 `iMM-gateway`，检查两个 LaunchAgent plist，复制 `Packaging/AppIcon-1024.png`（若存在正式 `AppIcon.icns` 则优先使用）到 `Contents/Resources/`，执行嵌套 ad-hoc 签名/验证，最后生成 ZIP 和 ZIP 的 `.sha256` 文件。它不会生成 Developer ID 签名、公证或 staple；当前 PNG 是开发包资源。正式发布前需用完整 Xcode 的 `iconutil` 从经过审查的 iconset 生成并验证 `AppIcon.icns`，并把该验证记录到发布清单。
+脚本会构建 `iMM.app`、内嵌 `market-message-cli` 和 `iMM-gateway`，检查两个 LaunchAgent plist，优先复制已验证的 `Packaging/AppIcon.icns`（否则明确回退到 `Packaging/AppIcon-1024.png` 开发资源）到 `Contents/Resources/`，执行嵌套 ad-hoc 签名/验证，最后生成 ZIP 和 ZIP 的 `.sha256` 文件。它不会生成 Developer ID 签名、公证或 staple。正式发布前需用完整 Xcode 的 `iconutil` 从经过审查的 iconset 生成并验证 `AppIcon.icns`，并把该验证记录到发布清单；不得以 PNG 改名代替。
 
 在本机安装或升级时，脚本只替换一个明确的 `iMM.app`，不会删除 Application Support、outbox 或 Keychain：
 
@@ -63,15 +63,15 @@ scripts/install-local-app.sh --app dist/iMM.app
 scripts/install-local-app.sh --app dist/iMM.app --destination /Applications
 ```
 
-安装脚本会在替换前尝试停止当前用户的精确服务标签 `gui/$(id -u)/com.imarketmessage.monitor`，但不会替代 App 内的 `SMAppService.unregister()`。如果 App 显示“已启用”或“等待批准”，先在 App 内点击“停用后台监控”，然后再升级。脚本采用 staging/恢复路径，失败时尽量恢复旧 App；不会自动注册新服务。
+安装脚本会在替换前尝试停止当前用户的精确服务标签 `gui/$(id -u)/com.imarketmessage.gateway` 和 `gui/$(id -u)/com.imarketmessage.monitor`，但不会替代 App 内的两个 `SMAppService.unregister()`。升级前先在旧 App 内停用 gateway companion，再停用后台监控；刷新状态并确认两个服务均为“未注册”后再运行脚本。脚本采用 staging/恢复路径，失败时尽量恢复旧 App；不会自动注册新服务，也不会删除 Application Support、outbox 或 Keychain。升级后在新 App 中先确认 pairing/数据仍在，再按需要恢复 monitor，最后恢复 gateway companion 并重新处理登录项批准。
 
-卸载默认保留用户数据，并且只接受明确的 App 路径：
+卸载默认保留用户数据，并且只接受明确的 App 路径。先在 App 内按 gateway companion → 后台监控的顺序点击停用，并确认两个 `SMAppService` 状态均为“未注册”；脚本随后只对对应当前用户 label 做残留 `launchctl bootout`：
 
 ```sh
 scripts/uninstall-local-app.sh --app "$HOME/Applications/iMM.app"
 ```
 
-只有用户明确选择 `--remove-data` 并确认，脚本才会删除精确的 `~/Library/Application Support/MarketMessage`；它不删除 Keychain 项。卸载前先在 App 内停用后台监控，脚本随后对同一 label 执行 `launchctl bootout`，并在删除前显示准确目标。
+只有用户明确选择 `--remove-data` 并确认，脚本才会删除精确的 `~/Library/Application Support/MarketMessage`；它不删除 Keychain 项。脚本随后对 `com.imarketmessage.gateway`、`com.imarketmessage.monitor` 两个精确 label 执行 `launchctl bootout`，并在删除前显示准确目标。
 
 ## 运行一次 CLI 检查
 
@@ -100,11 +100,11 @@ rm -rf -- /tmp/imarketmessage-cli /tmp/imarketmessage-outbox /tmp/imarketmessage
 
 ## 后台运行的边界
 
-`Config/com.marketmessage.monitor.plist.example` 只是旧式 LaunchAgent 模板，包含占位路径，不会在构建或测试时安装服务。v0.2 打包 App 使用 `Contents/Library/LaunchAgents/com.imarketmessage.monitor.plist` 和 `com.imarketmessage.gateway.plist`；主 App 通过 `SMAppService` 管理 monitor，gateway 只有显式 `--send` 才能消费 paired-self outbox。用户必须明确注册/批准所需服务并处理 Apple Events 权限；贡献者不得在代码或 CI 中自动注册、复制或修改用户 LaunchAgent。
+`Config/com.marketmessage.monitor.plist.example` 只是旧式 LaunchAgent 模板，包含占位路径，不会在构建或测试时安装服务。v0.2 打包 App 使用 `Contents/Library/LaunchAgents/com.imarketmessage.monitor.plist` 和 `com.imarketmessage.gateway.plist`；主 App 通过两个独立的 `SMAppService` 项管理 monitor 与 gateway，gateway 只有 paired-self 已配对且用户明确启用后才会消费 outbox。用户必须明确注册/批准所需服务并处理 Apple Events 权限；贡献者不得在代码或 CI 中自动注册、复制或修改用户 LaunchAgent。
 
 真实 Mac 验证仍是发布门槛而非 CI 推断。至少要在 macOS 14+ 的干净账户记录首次启动、通知允许和拒绝、登录项批准、Apple Events 允许/拒绝、重启、睡眠/唤醒、后台停用、升级、卸载和用户数据保留/删除；未完成项必须在 `RELEASE_CHECKLIST.md` 标记为未验证。
 
-真正的 iMessage 发送属于单独审查和授权的 gateway。请先阅读 [`docs/GATEWAY_PROTOCOL.md`](docs/GATEWAY_PROTOCOL.md)，确认 paired-self、幂等 ID、ACK 和本地权限，再决定是否适配；不要从这个仓库推断联系人或自动发送目标。
+真正的 iMessage 发送由 App 的手动“发送一次”和显式 `iMM-gateway --send` 共享的 paired-self gateway 完成。请先阅读 [`docs/GATEWAY_PROTOCOL.md`](docs/GATEWAY_PROTOCOL.md)，确认 paired-self、幂等 ID、ACK、本地权限及“process accepted 不等于 delivery receipt”的边界，再决定是否适配；不要从这个仓库推断联系人、群聊或自动发送目标，也不要接入旧的 Codex gateway。
 
 ## 贡献流程
 

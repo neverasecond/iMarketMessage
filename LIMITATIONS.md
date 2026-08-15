@@ -12,10 +12,10 @@ iMarketMessage（iMM）beta 仍是本地优先的 macOS 行情提醒工具，不
 
 ## 消息与后台运行
 
-- 本项目不读取 Messages 数据库、联系人、电话号码或 chat ID，不自动发现收件人，也不直接发送 iMessage。
-- `GatewayOutboxSink` 只向用户指定的本地目录写入受限 JSON；仓库内 gateway companion 只有显式 `--send` 才会消费并通过 Apple Events 发送到本机 paired-self，仍需用户单独审查授权。它不接受 recipient 参数，且不由主 App/安装脚本自动启用。
-- outbox 文件不是送达回执。重复运行使用确定性 ID，消费者必须自行做幂等处理；本仓库不保证消费者存在、在线或兼容。
-- 打包 App 的 LaunchAgent 只会在用户通过 `SMAppService` 明确注册并批准后运行；构建、CI 和安装脚本不会自动启用它。安装脚本只能对当前用户的精确 label 执行 `launchctl bootout`，不能代替 App 内 `unregister()`，卸载前仍需在 App 内停用。
+- 本项目不读取 Messages 数据库、Contacts、电话号码或 chat ID，不自动发现收件人；App 的“发送一次”和 gateway companion 只向一次明确保存的 paired-self 目标发送。
+- `GatewayOutboxSink` 只向用户指定的本地目录写入受限 JSON；App UI 和 gateway companion 在用户明确操作/启用并获 Apple Events 授权后，才会通过 AppleScript 发送到 paired-self。它们不接受 recipient 参数，也不调用 GitHub/`gh`、Codex/OpenAI 或用户已有的独立 gateway。
+- outbox 文件和 `sent` ACK 都不是送达回执。`osascript` 退出 0 只代表 Messages 接受了发送请求；错误的 paired-self 目标可能让进程成功返回但消息无法送达。正确目标在实机上的送达仍需用户检查 Messages 和目标设备。重复运行使用确定性 ID，消费者必须自行做幂等处理；本仓库不保证消费者在线或兼容。
+- 打包 App 的两个 LaunchAgent（monitor 与 gateway companion）分别由用户在 App 内通过 `SMAppService` 明确注册并批准后运行；构建、CI 和安装脚本不会自动启用它们。安装/卸载脚本只能对当前用户的精确 label 执行 `launchctl bootout`，不能代替 App 内 `unregister()`；升级或卸载前必须先在 UI 停用 gateway，再停用 monitor。
 - `Config/com.marketmessage.monitor.plist.example` 是旧式占位模板，不能直接当作打包 App 的服务配置。后台频率、日志、崩溃恢复和机器睡眠行为由用户自行管理。
 
 ## 安全、隐私与分发
@@ -25,13 +25,13 @@ iMarketMessage（iMM）beta 仍是本地优先的 macOS 行情提醒工具，不
 - 首版不提供自动更新、安全公告推送、托管 gateway、集中审计、跨设备同步或恢复服务。
 - CI 在完整 Xcode runner 上验证 `swift build`/`swift test`、bundle/plist、ad-hoc 签名、ZIP 内容和 SHA-256，并可上传短期 Actions artifact；它不执行 Developer ID 签名、公证或发布。`actions/upload-artifact` 只作为 CI 交付通道，不能当作公开 Release 或供应链证明。
 - `scripts/build-local-app.sh` 生成的 app/ZIP/`.sha256` 仅供可信源码的本机构建和测试；它没有 Developer ID 身份、Apple 公证、staple 或 Gatekeeper 放行。Release 前必须由发布者本人另行完成签名、公证和干净 Mac 验证，见 [`docs/APPLE_SIGNING.md`](docs/APPLE_SIGNING.md)。
-- 当前 bundle 纳入 `Packaging/AppIcon-1024.png` 作为开发资源，但尚未提供可声称完成的 `AppIcon.icns`。正式发布前需使用完整 Xcode `iconutil` 生成并验证 `.icns`；CI 的 release-only gate 会在缺少该产物时停止。
-- `iMM-gateway` 的 `--send` 会启动 `/usr/bin/osascript` 与 Messages 交互；Apple Events 权限、Messages 登录状态、paired-self 文件、发送失败/重试和真实送达仍未由静态 CI 证明，必须在真实 Mac 上逐项验证。
+- 当前 bundle 优先纳入经过完整 Xcode `iconutil` 验证的 `Packaging/AppIcon.icns`；没有该正式资源时只纳入 `Packaging/AppIcon-1024.png` 开发图标，CI 的 release-only gate 会停止。图标文件存在本身不等于经过 `iconutil` 验证。
+- App UI 的手动发送和 `iMM-gateway --send` 都会启动 `/usr/bin/osascript` 与 Messages 交互；Apple Events 权限、Messages 登录状态、paired-self 文件、发送失败/重试、`osascript` 接受但目标错误的情况和真实送达仍未由静态 CI 证明，必须在真实 Mac 上逐项验证。
 
 ## 本地安装与真实 Mac 验证
 
 - 安装/升级脚本只替换明确的 `iMM.app`，默认保留 `~/Library/Application Support/MarketMessage`；卸载只有在用户明确传入 `--remove-data` 并确认时才删除该精确目录。Keychain 中的 API key 不由脚本删除。
-- 尚未由本仓库的静态 CI 证明通知授权/拒绝、登录项批准、重启、睡眠唤醒、后台停用、升级回滚、卸载后服务残留或不同架构上的 Gatekeeper 行为；这些必须在真实 macOS 14+ 干净账户按 [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) 逐项记录。
+- 尚未由本仓库的静态 CI 证明通知授权/拒绝、两个登录项批准、重启、睡眠唤醒、按 gateway→monitor 顺序停用、升级回滚、卸载后两个服务残留或不同架构上的 Gatekeeper 行为；这些必须在真实 macOS 14+ 干净账户按 [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) 逐项记录。
 
 ## 支持范围
 
